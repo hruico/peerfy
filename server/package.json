@@ -1,0 +1,23 @@
+{
+  "name": "peerfy-server",
+  "version": "1.0.0",
+  "description": "Peerfy signaling server",
+  "license": "ISC",
+  "author": "vihaan",
+  "type": "commonjs",
+  "main": "index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
+    "helmet": "^8.2.0",
+    "morgan": "^1.11.0",
+    "socket.io": "^4.8.3"
+  }
+}

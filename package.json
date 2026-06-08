@@ -1,0 +1,12 @@
+{
+  "name": "peerfy",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build":   "npm run build --prefix client",
+    "start":   "npm start --prefix server",
+    "dev:client": "npm run dev --prefix client",
+    "dev:server": "npm start --prefix server",
+    "install:all": "npm i --prefix client && npm i --prefix server"
+  }
+}
