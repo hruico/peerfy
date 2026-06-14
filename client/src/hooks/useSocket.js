@@ -1,17 +1,25 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 
 const EVENTS = [
   "vault:joined", "vault:updated", "vault:error", "vault:dissolved",
+  "vault:pubkeys",
   "signal:offer", "signal:answer", "signal:ice",
 ];
 
-// Module-level singleton — survives React 18 Strict Mode double-mount
+// Module-level singleton — survives React 18 Strict Mode double-mount.
 let _socket = null;
 
 function getSocket() {
   if (!_socket || _socket.disconnected) {
-    _socket = io();
+    const url = import.meta.env.VITE_BACKEND_URL;
+    _socket = io(url || undefined, {
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      transports: ["websocket", "polling"],
+    });
   }
   return _socket;
 }
@@ -19,34 +27,44 @@ function getSocket() {
 export function useSocket(handlers) {
   const socketRef   = useRef(null);
   const handlersRef = useRef(handlers);
-  // Always keep the latest handlers accessible without re-registering listeners
   handlersRef.current = handlers;
+  const [connected, setConnected] = useState(() => getSocket().connected);
 
   useEffect(() => {
     const socket = getSocket();
     socketRef.current = socket;
+    setConnected(socket.connected);
 
-    // Register one stable listener per event that delegates to the latest handler ref.
-    // Using named functions so we can safely remove exactly these listeners on cleanup.
+    const onConnect = () => {
+      setConnected(true);
+      handlersRef.current.onConnect?.();
+    };
+    const onDisconnect = (reason) => {
+      setConnected(false);
+      handlersRef.current.onDisconnect?.(reason);
+    };
+    const onConnectError = (err) => {
+      handlersRef.current.onConnectError?.(err);
+    };
+
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("connect_error", onConnectError);
+
     const listeners = {};
     EVENTS.forEach((ev) => {
-      // Remove any previously registered listener for this event on this socket
-      if (socket._peerfyListeners?.[ev]) {
-        socket.off(ev, socket._peerfyListeners[ev]);
-      }
       const fn = (data) => handlersRef.current[ev]?.(data);
       listeners[ev] = fn;
       socket.on(ev, fn);
     });
-    // Store refs so the next mount can cleanly replace them
-    socket._peerfyListeners = listeners;
 
     return () => {
-      // On Strict Mode cleanup we intentionally do NOT disconnect the socket
-      // and do NOT remove the listeners — the re-mount will replace them above.
-      // This prevents ICE / signaling messages from being dropped mid-negotiation.
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("connect_error", onConnectError);
+      EVENTS.forEach((ev) => socket.off(ev, listeners[ev]));
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return socketRef;
+  return { socketRef, connected };
 }

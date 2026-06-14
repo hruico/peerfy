@@ -21,7 +21,7 @@
 
 import { sha256hex, encryptChunk, decryptChunk } from "./crypto";
 import { CHUNK_SIZE, BUFFER_THRESHOLD }          from "./webrtc";
-import { createOPFSWriter }                      from "./opfs";
+import { createOPFSWriter, OPFS_AVAILABLE }                      from "./opfs";
 
 const CHECKPOINT_EVERY = 10; // save resume offset every N chunks
 const RESUME_KEY = (hash) => `qs_resume_${hash}`;
@@ -33,8 +33,18 @@ export async function sendFile(channel, file, aesKey, onProgress) {
   const total       = buffer.byteLength;
   const totalChunks = Math.ceil(total / CHUNK_SIZE);
 
-  // Send meta — receiver will reply with resume or silence (= start from 0)
-  channel.send(JSON.stringify({ type: "meta", name: file.name, size: total, hash, totalChunks }));
+  // Send meta — include whether this transfer is encrypted so the receiver
+  // knows whether to decrypt regardless of its own key state.
+  const encrypted = !!aesKey;
+  channel.send(JSON.stringify({
+    type: "meta",
+    name: file.name,
+    size: total,
+    hash,
+    totalChunks,
+    encrypted,
+    mime: file.type || "application/octet-stream",
+  }));
 
   const startTime = Date.now();
 
@@ -43,10 +53,14 @@ export async function sendFile(channel, file, aesKey, onProgress) {
     let startChunk = 0;
     let started    = false;
 
-    // ── Wait for either "resume" reply or a short grace period ──
+    // Wait for receiver to reply with resume/ready — never auto-start from 0,
+    // which races with resume negotiation and corrupts partial transfers.
     const resumeTimer = setTimeout(() => {
-      if (!started) { started = true; sendFrom(0); }
-    }, 300); // if no resume reply within 300 ms, start from 0
+      if (!started) reject(new Error("Receiver did not respond — transfer timed out."));
+    }, 30_000);
+
+    let sendDone = false;
+    let ackTimeout = null;
 
     channel.addEventListener("message", (ev) => {
       if (typeof ev.data !== "string") return;
@@ -61,6 +75,10 @@ export async function sendFile(channel, file, aesKey, onProgress) {
         clearTimeout(resumeTimer);
         started = true;
         sendFrom(0);
+      }
+      if (msg.type === "ack" && sendDone) {
+        clearTimeout(ackTimeout);
+        resolve();
       }
     });
 
@@ -117,7 +135,11 @@ export async function sendFile(channel, file, aesKey, onProgress) {
       function done() {
         channel.send(JSON.stringify({ type: "done", hash }));
         report(total);
-        resolve();
+        sendDone = true;
+        
+        ackTimeout = setTimeout(() => {
+          reject(new Error("Timeout waiting for receiver ACK"));
+        }, 30000); // 30s for receiver to write OPFS, hash, and reply
       }
 
       sendNext();
@@ -135,108 +157,143 @@ export function receiveFile(channel, aesKey, onProgress) {
     let chunkCount = 0;   // chunks received this session
     let received   = 0;   // bytes received this session
     let resumedFrom = 0;  // chunks already on disk from a previous session
+    let settled    = false; // true once resolve/reject has been called
     const startTime = Date.now();
 
     channel.binaryType = "arraybuffer";
 
-    channel.addEventListener("message", async (ev) => {
-      try {
-        // ── Control messages ──
-        if (typeof ev.data === "string") {
-          const msg = JSON.parse(ev.data);
+    let writeQueue = Promise.resolve();
 
-          if (msg.type === "meta") {
-            meta = msg;
-            const savedChunk = Number(sessionStorage.getItem(RESUME_KEY(msg.hash)) || 0);
-            const opfsName   = `qs_${msg.hash.slice(0, 16)}_${msg.name}`;
-            const resumeByte = savedChunk * CHUNK_SIZE;
+    channel.addEventListener("message", (ev) => {
+      writeQueue = writeQueue.then(async () => {
+        try {
+          // ── Control messages ──
+          if (typeof ev.data === "string") {
+            const msg = JSON.parse(ev.data);
 
-            resumedFrom = savedChunk;
-            received    = resumeByte; // count bytes already on disk toward progress
-            writer      = await createOPFSWriter(opfsName, resumeByte);
+            if (msg.type === "meta") {
+              meta = msg;
+              let savedChunk = Number(sessionStorage.getItem(RESUME_KEY(msg.hash)) || 0);
+              // Resume only works with OPFS — otherwise start fresh to avoid corruption
+              if (savedChunk > 0 && !OPFS_AVAILABLE) {
+                sessionStorage.removeItem(RESUME_KEY(msg.hash));
+                savedChunk = 0;
+              }
+              const opfsName   = `qs_${msg.hash.slice(0, 16)}_${msg.name}`;
+              const resumeByte = savedChunk * CHUNK_SIZE;
 
-            if (savedChunk > 0 && savedChunk < msg.totalChunks) {
-              // Tell sender to skip already-received chunks
-              channel.send(JSON.stringify({ type: "resume", fromChunk: savedChunk }));
-              onProgress?.({
-                transferred: resumeByte,
-                total:       msg.size,
-                speed:       0,
-                filename:    msg.name,
-                resuming:    true,
-              });
-            } else {
-              // Fresh start
-              channel.send(JSON.stringify({ type: "ready" }));
+              resumedFrom = savedChunk;
+              received    = resumeByte; // count bytes already on disk toward progress
+              writer      = await createOPFSWriter(opfsName, resumeByte);
+
+              if (savedChunk > 0 && savedChunk < msg.totalChunks) {
+                // Tell sender to skip already-received chunks
+                channel.send(JSON.stringify({ type: "resume", fromChunk: savedChunk }));
+                onProgress?.({
+                  transferred: resumeByte,
+                  total:       msg.size,
+                  speed:       0,
+                  filename:    msg.name,
+                  resuming:    true,
+                });
+              } else {
+                // Fresh start
+                channel.send(JSON.stringify({ type: "ready" }));
+              }
             }
+
+            if (msg.type === "done") {
+              if (!meta || !writer) { settled = true; reject(new Error("done before meta")); return; }
+
+              // Mark settled BEFORE async work so the close handler doesn't race
+              settled = true;
+
+              const fileOrBlob = await writer.finish();
+              const buf        = await fileOrBlob.arrayBuffer();
+              const recvHash   = await sha256hex(buf);
+              const ok         = recvHash === msg.hash;
+
+              // Clear checkpoint on success, keep it on failure so retry works
+              if (ok) sessionStorage.removeItem(RESUME_KEY(msg.hash));
+
+              try { channel.send(JSON.stringify({ type: "ack" })); } catch (_) {}
+
+              resolve({
+                blob:         new Blob([buf], { type: meta.mime || meta.type || "application/octet-stream" }),
+                ok,
+                name:         meta.name,
+                size:         meta.size,
+                hash:         recvHash,
+                expectedHash: msg.hash,
+              });
+            }
+            return;
           }
 
-          if (msg.type === "done") {
-            if (!meta || !writer) { reject(new Error("done before meta")); return; }
+          // ── Binary chunk ──
+          if (!writer) return;
 
-            const fileOrBlob = await writer.finish();
-            const buf        = await fileOrBlob.arrayBuffer();
-            const recvHash   = await sha256hex(buf);
-            const ok         = recvHash === msg.hash;
+          const raw = ev.data;
+          let plaintext;
 
-            // Clear checkpoint on success, keep it on failure so retry works
-            if (ok) sessionStorage.removeItem(RESUME_KEY(msg.hash));
-
-            resolve({
-              blob:         new Blob([buf], { type: meta.type || "application/octet-stream" }),
-              ok,
-              name:         meta.name,
-              size:         meta.size,
-              hash:         recvHash,
-              expectedHash: msg.hash,
-            });
+          if (meta?.encrypted && aesKey) {
+            plaintext = await decryptChunk(
+              aesKey,
+              new Uint8Array(raw.slice(0, 12)),
+              raw.slice(12)
+            );
+          } else if (meta?.encrypted && !aesKey) {
+            // Sender encrypted but we have no key — can't decrypt
+            if (!settled) {
+              settled = true;
+              writer?.cleanup?.();
+              reject(new Error("Transfer is encrypted but no key is available. Wait for key exchange to complete."));
+            }
+            return;
+          } else {
+            plaintext = raw;
           }
-          return;
+
+          await writer.write(plaintext);
+          chunkCount += 1;
+          received   += plaintext.byteLength;
+
+          // Checkpoint every N chunks
+          if (chunkCount % CHECKPOINT_EVERY === 0 && meta) {
+            sessionStorage.setItem(RESUME_KEY(meta.hash), resumedFrom + chunkCount);
+          }
+
+          const elapsed = (Date.now() - startTime) / 1000 || 0.001;
+          onProgress?.({
+            transferred: received,
+            total:       meta?.size ?? 0,
+            speed:       received / elapsed,
+            filename:    meta?.name,
+            resuming:    false,
+          });
+        } catch (e) {
+          writer?.cleanup?.();
+          if (!settled) { settled = true; reject(e); }
         }
-
-        // ── Binary chunk ──
-        if (!writer) return;
-
-        const raw = ev.data;
-        let plaintext;
-
-        if (aesKey) {
-          plaintext = await decryptChunk(
-            aesKey,
-            new Uint8Array(raw.slice(0, 12)),
-            raw.slice(12)
-          );
-        } else {
-          plaintext = raw;
-        }
-
-        await writer.write(plaintext);
-        chunkCount += 1;
-        received   += plaintext.byteLength;
-
-        // Checkpoint every N chunks
-        if (chunkCount % CHECKPOINT_EVERY === 0 && meta) {
-          sessionStorage.setItem(RESUME_KEY(meta.hash), resumedFrom + chunkCount);
-        }
-
-        const elapsed = (Date.now() - startTime) / 1000 || 0.001;
-        onProgress?.({
-          transferred: received,
-          total:       meta?.size ?? 0,
-          speed:       received / elapsed,
-          filename:    meta?.name,
-          resuming:    false,
-        });
-      } catch (e) {
-        writer?.cleanup?.();
-        reject(e);
-      }
+      });
     });
 
-    channel.addEventListener("error", (e) => { writer?.cleanup?.(); reject(e); });
+    channel.addEventListener("error", (e) => {
+      writer?.cleanup?.();
+      if (!settled) {
+        settled = true;
+        const msg = e.error?.message || "DataChannel error";
+        reject(new Error(msg));
+      }
+    });
     channel.addEventListener("close", () => {
-      if (!meta) reject(new Error("Channel closed before transfer started"));
-      // If mid-transfer, the checkpoint in sessionStorage lets us resume later
+      if (settled) return; // Transfer already completed successfully
+      settled = true;
+      if (!meta) {
+        reject(new Error("Channel closed before transfer started"));
+      } else {
+        reject(new Error("Channel closed during transfer"));
+      }
     });
   });
 }

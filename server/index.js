@@ -3,6 +3,7 @@
 const http = require("http");
 const app  = require("./app");
 const { createSocketServer } = require("./socket");
+const { vaults, dissolveVault } = require("./lib/vaults");
 const { PORT, NODE_ENV }     = require("./config");
 
 const httpServer = http.createServer(app);
@@ -11,7 +12,9 @@ const io         = createSocketServer(httpServer);
 // ── Graceful shutdown ──────────────────────────────────────────────────────────
 function shutdown(signal) {
   console.log(`\n[server] ${signal} received — shutting down gracefully`);
-  io.emit("vault:dissolved", { reason: "server_shutdown" });
+  for (const vaultId of [...vaults.keys()]) {
+    dissolveVault(vaultId, io, "server_shutdown");
+  }
 
   httpServer.close(() => {
     console.log("[server] HTTP server closed");
@@ -39,5 +42,5 @@ process.on("unhandledRejection", (reason) => {
 
 // ── Start ──────────────────────────────────────────────────────────────────────
 httpServer.listen(PORT, () => {
-  console.log(`[server] qwikShare listening on :${PORT} (${NODE_ENV})`);
+  console.log(`[server] peerfy listening on :${PORT} (${NODE_ENV})`);
 });

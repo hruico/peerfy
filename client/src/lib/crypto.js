@@ -6,31 +6,51 @@ export async function sha256hex(buffer) {
     .join("");
 }
 
+// ── ECDH key exchange ─────────────────────────────────────────────────────────
+
 /**
- * Generate a new AES-GCM-256 key.
- * Returns { key: CryptoKey, exported: base64url string }
+ * Generate an ECDH P-256 keypair for this session.
+ * Returns { privateKey: CryptoKey, publicKey: CryptoKey, exported: base64url }
+ * where `exported` is the raw public key safe to send over the signaling channel.
  */
-export async function generateAESKey() {
-  const key = await crypto.subtle.generateKey(
-    { name: "AES-GCM", length: 256 },
-    true,
-    ["encrypt", "decrypt"]
+export async function generateECDHKeypair() {
+  const { privateKey, publicKey } = await crypto.subtle.generateKey(
+    { name: "ECDH", namedCurve: "P-256" },
+    false,       // private key is non-extractable
+    ["deriveKey"]
   );
-  const raw      = await crypto.subtle.exportKey("raw", key);
-  const exported = btoa(String.fromCharCode(...new Uint8Array(raw)))
-    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); // base64url
-  return { key, exported };
+  const raw      = await crypto.subtle.exportKey("raw", publicKey);
+  const exported = _toBase64url(raw);
+  return { privateKey, publicKey, exported };
 }
 
 /**
- * Import a base64url AES-GCM key string back into a CryptoKey.
- * Both encrypt and decrypt are granted — any vault member can upload or download.
+ * Import a peer's base64url-encoded raw P-256 public key.
  */
-export async function importAESKey(base64url) {
-  const b64   = base64url.replace(/-/g, "+").replace(/_/g, "/");
-  const raw   = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+export async function importECDHPublicKey(base64url) {
+  const raw = _fromBase64url(base64url);
+  return crypto.subtle.importKey(
+    "raw", raw,
+    { name: "ECDH", namedCurve: "P-256" },
+    false, []
+  );
 }
+
+/**
+ * Derive a shared AES-GCM-256 key from our private key and a peer's public key.
+ * Both sides derive the same key — no key material is ever transmitted.
+ */
+export async function deriveSharedKey(myPrivateKey, theirPublicKey) {
+  return crypto.subtle.deriveKey(
+    { name: "ECDH", public: theirPublicKey },
+    myPrivateKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+// ── AES-GCM chunk encryption ──────────────────────────────────────────────────
 
 /**
  * Encrypt an ArrayBuffer chunk with AES-GCM.
@@ -44,8 +64,17 @@ export async function encryptChunk(key, plaintext) {
 
 /**
  * Decrypt an AES-GCM encrypted chunk.
- * iv must be a Uint8Array(12), ciphertext an ArrayBuffer.
  */
 export async function decryptChunk(key, iv, ciphertext) {
   return crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+function _toBase64url(buf) {
+  return btoa(String.fromCharCode(...new Uint8Array(buf)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function _fromBase64url(s) {
+  const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }

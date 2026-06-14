@@ -21,7 +21,7 @@ function registerVaultHandlers(socket, io) {
     const vault = {
       id:        vaultId,
       createdAt: Date.now(),
-      members:   new Map([[socket.id, { name: String(name).slice(0, 32), joinedAt: Date.now() }]]),
+      members:   new Map([[socket.id, { name: String(name).slice(0, 32), joinedAt: Date.now(), pubkey: null }]]),
       files:     new Map(),
       ttlTimer:  null,
     };
@@ -49,15 +49,35 @@ function registerVaultHandlers(socket, io) {
       return;
     }
 
-    vault.members.set(socket.id, { name: String(name).slice(0, 32), joinedAt: Date.now() });
+    vault.members.set(socket.id, { name: String(name).slice(0, 32), joinedAt: Date.now(), pubkey: null });
     socket.join(vault.id);
     socket.vaultId = vault.id;
+    armTTL(vault, io);
 
     socket.emit("vault:joined", vaultSummary(vault));
-    // Broadcast to everyone else — the joiner already has full state from vault:joined
     socket.to(vault.id).emit("vault:updated", vaultSummary(vault));
 
     console.log(`[vault] ${vault.id} joined by ${socket.id} (${name}), members: ${vault.members.size}`);
+  });
+
+  // ── vault:pubkey ─────────────────────────────────────────────────────────────
+  // Each peer broadcasts their ECDH public key after joining.
+  // The server stores it and sends the full pubkey map to everyone in the vault
+  // so each peer can derive a shared secret with every other peer.
+  socket.on("vault:pubkey", ({ pubkey } = {}) => {
+    const vault = vaults.get(socket.vaultId);
+    if (!vault) return;
+    if (typeof pubkey !== "string" || pubkey.length > 256) return; // basic validation
+
+    const member = vault.members.get(socket.id);
+    if (member) member.pubkey = pubkey;
+
+    // Broadcast the full pubkey map to everyone in the vault
+    const pubkeys = {};
+    for (const [sid, m] of vault.members) {
+      if (m.pubkey) pubkeys[sid] = m.pubkey;
+    }
+    io.to(vault.id).emit("vault:pubkeys", pubkeys);
   });
 
   // ── vault:file:add ──────────────────────────────────────────────────────────
@@ -82,6 +102,7 @@ function registerVaultHandlers(socket, io) {
     };
 
     vault.files.set(fileId, entry);
+    armTTL(vault, io);
     io.to(vault.id).emit("vault:updated", vaultSummary(vault));
     console.log(`[vault] ${vault.id} file added: ${entry.name} (${entry.size}B) by ${socket.id}`);
   });
@@ -113,6 +134,11 @@ function registerVaultHandlers(socket, io) {
     if (!vault) return;
 
     vault.members.delete(socket.id);
+
+    // Files only exist while the uploader is online with the File in memory.
+    for (const [fileId, file] of vault.files) {
+      if (file.uploaderId === socket.id) vault.files.delete(fileId);
+    }
 
     if (vault.members.size === 0) {
       dissolveVault(vaultId, io, "empty");

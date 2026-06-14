@@ -1,9 +1,13 @@
 "use strict";
 
+const { randomBytes } = require("crypto");
+
 const CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous chars (0/O, 1/I)
 
+/** Cryptographically-secure random ID. */
 function makeId(len = 6) {
-  return Array.from({ length: len }, () => CHARS[Math.floor(Math.random() * CHARS.length)]).join("");
+  const buf = randomBytes(len);
+  return Array.from(buf, (b) => CHARS[b % CHARS.length]).join("");
 }
 
 /**

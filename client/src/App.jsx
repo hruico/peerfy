@@ -1,9 +1,10 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import { useSocket }          from "./hooks/useSocket";
-import { sha256hex, generateAESKey, importAESKey } from "./lib/crypto";
+import { sha256hex, generateECDHKeypair, importECDHPublicKey, deriveSharedKey } from "./lib/crypto";
 import { sendFile, receiveFile }                   from "./lib/transfer";
 import { ICE_CONFIG }                              from "./lib/webrtc";
-import { formatBytes, formatSpeed }                from "./lib/format";
+import { formatBytes }                             from "./lib/format";
+import { routeKey, createManagedPeer, waitForSharedKey } from "./lib/peers";
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
@@ -26,8 +27,6 @@ const C = {
 
 const FONT = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
-const LOGO_FILTER = "invert(1) sepia(1) saturate(4) hue-rotate(35deg) brightness(1.05)";
-
 // ── Global styles injected once ───────────────────────────────────────────────
 const GLOBAL_CSS = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -48,6 +47,16 @@ const GLOBAL_CSS = `
   @keyframes fade-up {
     from { opacity: 0; transform: translateY(6px); }
     to   { opacity: 1; transform: translateY(0); }
+  }
+  .vault-layout {
+    flex: 1; display: grid;
+    grid-template-columns: 196px 1fr 172px;
+    overflow: hidden; min-height: 0;
+  }
+  @media (max-width: 900px) {
+    .vault-layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
+    .vault-sidebar-left { border-right: none !important; border-bottom: 1px solid ${C.border}; }
+    .vault-sidebar-right { border-left: none !important; border-top: 1px solid ${C.border}; max-height: 180px; }
   }
 `;
 
@@ -80,11 +89,17 @@ export default function App() {
   const st = useCallback((patch) => setState((s) => ({ ...s, ...patch })), []);
 
   const socketRef_ = useRef(null);
-  const aesKeyRef  = useRef(null);
-  const vaultIdRef = useRef(null);
-  const peersRef   = useRef({});
+  // ECDH keypair generated once per session on vault join/create
+  const ecdhRef        = useRef(null);  // { privateKey, publicKey, exported }
+  // Map of peerId → derived AES CryptoKey, populated when we receive their pubkey
+  const sharedKeysRef  = useRef({});
+  const vaultIdRef        = useRef(null);
+  const myNameRef         = useRef(null);
+  const peersRef          = useRef({});   // peerKey → managed peer entry
+  const routesRef         = useRef({});   // routeKey(fileId, socketId) → peerKey
   const pendingUploadsRef = useRef(new Map());
   const vaultFilesRef     = useRef([]);
+  const activeDownloadsRef = useRef(new Set());
 
   const toast = useCallback((msg, type = "info", ttl = 4000) => {
     const id = ++toastSeq;
@@ -92,81 +107,102 @@ export default function App() {
     setTimeout(() => setState((s) => ({ ...s, toasts: s.toasts.filter((t) => t.id !== id) })), ttl);
   }, []);
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.hash.slice(1));
-    const keyStr = params.get("key");
-    if (keyStr) importAESKey(keyStr).then((k) => { aesKeyRef.current = k; });
-  }, []);
-
   useEffect(() => { vaultFilesRef.current = state.files; }, [state.files]);
+  useEffect(() => { myNameRef.current = myName; }, [myName]);
 
-  function createPeerConn(peerKey, signalingTarget) {
-    if (peersRef.current[peerKey]) {
-      try { peersRef.current[peerKey].close(); } catch (_) {}
+  function removePeer(peerKey, routeKeys = []) {
+    const entry = peersRef.current[peerKey];
+    if (entry) {
+      entry.close();
+      delete peersRef.current[peerKey];
     }
-    const peer = new RTCPeerConnection(ICE_CONFIG);
-    // signalingTarget is the actual socket ID to send ICE/offers to
-    const target = signalingTarget || peerKey;
-    peer.addEventListener("icecandidate", (ev) => {
-      if (ev.candidate)
-        socketRef_.current?.emit("signal:ice", { to: target, candidate: ev.candidate });
-    });
-    peer.addEventListener("connectionstatechange", () => {
-      const s = peer.connectionState;
-      setState((prev) => ({ ...prev, peerStatus: { ...prev.peerStatus, [peerKey]: s } }));
-    });
-    peersRef.current[peerKey] = peer;
-    return peer;
+    for (const rk of routeKeys) delete routesRef.current[rk];
   }
 
-  const downloadFile = useCallback(async (file) => {
-    if (!file.uploaderId) return;
-    if (file.uploaderId === socketRef_.current?.id) return;
+  function createPeerConn(peerKey, signalingTarget, fileId, remoteSocketId) {
+    removePeer(peerKey, fileId && remoteSocketId ? [routeKey(fileId, remoteSocketId)] : []);
 
-    const peerKey = `dl-${file.id}`;
-    // Pass uploaderId as signalingTarget so ICE/offer go to the right socket
-    const peer    = createPeerConn(peerKey, file.uploaderId);
-    const channel = peer.createDataChannel(`dl:${file.id}`);
-
-    // Map uploaderId → peerKey so signal:answer can find the right peer
-    // Use an array to support multiple simultaneous downloads from same uploader
-    if (!peersRef.current[`byUploader:${file.uploaderId}`]) {
-      peersRef.current[`byUploader:${file.uploaderId}`] = [];
-    }
-    peersRef.current[`byUploader:${file.uploaderId}`].push(peerKey);
-
-    setState((s) => ({ ...s, peerStatus: { ...s.peerStatus, [peerKey]: "connecting" } }));
-
-    function cleanup() {
-      delete peersRef.current[peerKey];
-      const list = peersRef.current[`byUploader:${file.uploaderId}`];
-      if (Array.isArray(list)) {
-        const idx = list.indexOf(peerKey);
-        if (idx !== -1) list.splice(idx, 1);
-        if (list.length === 0) delete peersRef.current[`byUploader:${file.uploaderId}`];
-      }
-    }
-
-    receiveFile(channel, aesKeyRef.current, (prog) => {
-      setProgress((p) => ({ ...p, [file.id]: prog }));
-    }).then(({ blob, ok, name }) => {
-      setProgress((p) => { const n = { ...p }; delete n[file.id]; return n; });
-      setState((s) => { const ps = { ...s.peerStatus }; delete ps[peerKey]; return { ...s, peerStatus: ps }; });
-      cleanup();
-      if (!ok) { toast(`Hash mismatch — "${name}" may be corrupted.`, "error"); return; }
-      toast(`"${name}" downloaded.`, "success");
-      const url = URL.createObjectURL(blob);
-      Object.assign(document.createElement("a"), { href: url, download: name }).click();
-      URL.revokeObjectURL(url);
-    }).catch((e) => {
-      toast(`Download failed: ${e.message}`, "error");
-      setProgress((p) => { const n = { ...p }; delete n[file.id]; return n; });
-      cleanup();
+    const target = signalingTarget || peerKey;
+    const managed = createManagedPeer({
+      iceConfig: ICE_CONFIG,
+      onIceCandidate: (candidate) => {
+        socketRef_.current?.emit("signal:ice", { to: target, candidate, fileId });
+      },
+      onStateChange: (s) => {
+        setState((prev) => ({ ...prev, peerStatus: { ...prev.peerStatus, [peerKey]: s } }));
+      },
     });
 
-    const offer = await peer.createOffer();
-    await peer.setLocalDescription(offer);
-    socketRef_.current?.emit("signal:offer", { to: file.uploaderId, offer });
+    peersRef.current[peerKey] = managed;
+    if (fileId && remoteSocketId) {
+      routesRef.current[routeKey(fileId, remoteSocketId)] = peerKey;
+    }
+    return managed;
+  }
+
+  function resolvePeer(fileId, from) {
+    if (!fileId || !from) return null;
+    const peerKey = routesRef.current[routeKey(fileId, from)];
+    return peerKey ? peersRef.current[peerKey] : null;
+  }
+
+  const downloadFile = useCallback((file) => {
+    if (!file.uploaderId) return Promise.resolve();
+    if (file.uploaderId === socketRef_.current?.id) return Promise.resolve();
+    if (activeDownloadsRef.current.has(file.id)) return Promise.resolve();
+
+    activeDownloadsRef.current.add(file.id);
+    const rk = routeKey(file.id, file.uploaderId);
+
+    return (async () => {
+      try {
+        const sharedKey = await waitForSharedKey(sharedKeysRef, file.uploaderId);
+
+        const peerKey = `dl-${file.id}`;
+        const managed = createPeerConn(peerKey, file.uploaderId, file.id, file.uploaderId);
+        const { peer } = managed;
+        const channel = peer.createDataChannel(`dl:${file.id}`);
+
+        setState((s) => ({ ...s, peerStatus: { ...s.peerStatus, [peerKey]: "connecting" } }));
+
+        function cleanup() {
+          removePeer(peerKey, [rk]);
+          activeDownloadsRef.current.delete(file.id);
+          setState((s) => {
+            const ps = { ...s.peerStatus };
+            delete ps[peerKey];
+            return { ...s, peerStatus: ps };
+          });
+        }
+
+        const receivePromise = receiveFile(channel, sharedKey, (prog) => {
+          setProgress((p) => ({ ...p, [file.id]: prog }));
+        });
+
+        const offer = await peer.createOffer();
+        await peer.setLocalDescription(offer);
+        socketRef_.current?.emit("signal:offer", { to: file.uploaderId, offer, fileId: file.id });
+
+        const { blob, ok, name } = await receivePromise;
+        setProgress((p) => { const n = { ...p }; delete n[file.id]; return n; });
+        cleanup();
+
+        if (!ok) {
+          toast(`Hash mismatch — "${name}" may be corrupted.`, "error");
+          return;
+        }
+        toast(`"${name}" downloaded.`, "success");
+        const url = URL.createObjectURL(blob);
+        Object.assign(document.createElement("a"), { href: url, download: name }).click();
+        setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      } catch (e) {
+        toast(`Download failed: ${e.message || "Connection error"}`, "error");
+        setProgress((p) => { const n = { ...p }; delete n[file.id]; return n; });
+        removePeer(`dl-${file.id}`, [rk]);
+        activeDownloadsRef.current.delete(file.id);
+        throw e;
+      }
+    })();
   }, [toast]);
 
   const uploadFile = useCallback(async (file) => {
@@ -174,47 +210,99 @@ export default function App() {
       toast(`"${file.name}" exceeds the ${formatBytes(MAX_UPLOAD_BYTES)} limit.`, "error", 6000);
       return;
     }
+    // Hash the file to register it in the vault manifest.
+    // We do NOT store the ArrayBuffer here — sendFile will re-read from the File
+    // object on demand, avoiding doubling memory usage for large files.
     const buffer = await file.arrayBuffer();
     const hash   = await sha256hex(buffer);
     socketRef_.current?.emit("vault:file:add", {
       name: file.name, size: file.size,
       type: file.type || "application/octet-stream", hash,
     });
-    pendingUploadsRef.current.set(hash, { file, buffer, hash });
+    // Store only the File reference (not the buffer) so the browser can GC it.
+    pendingUploadsRef.current.set(hash, { file, hash });
     toast(`"${file.name}" added to vault.`, "success");
   }, [toast]);
 
-  const handleIncomingOffer = useCallback(async ({ from, offer }) => {
-    // Store uploader-side peer by downloader's socket id — ICE goes back to `from`
-    const peer = createPeerConn(from, from);
-    peer.addEventListener("datachannel", async (ev) => {
-      const channel = ev.channel;
-      const fileId  = channel.label.replace("dl:", "");
-      const vFile   = vaultFilesRef.current.find((f) => f.id === fileId);
-      if (!vFile) return;
+  const handleIncomingOffer = useCallback(async ({ from, offer, fileId }) => {
+    if (!fileId) return;
+
+    const peerKey = `ul:${from}:${fileId}`;
+    const rk = routeKey(fileId, from);
+    const managed = createPeerConn(peerKey, from, fileId, from);
+    const { peer, setRemoteDescription } = managed;
+
+    peer.addEventListener("datachannel", (ev) => {
+      const channel    = ev.channel;
+      const chanFileId = channel.label.replace("dl:", "");
+      const vFile      = vaultFilesRef.current.find((f) => f.id === chanFileId);
+      if (!vFile) {
+        toast(`Download request for unknown file.`, "error");
+        return;
+      }
       const upload = pendingUploadsRef.current.get(vFile.hash);
-      if (!upload) return;
+      if (!upload) {
+        toast(`File "${vFile.name}" is no longer available — uploader may have refreshed.`, "error");
+        return;
+      }
+
       channel.addEventListener("open", async () => {
         try {
-          await sendFile(channel, upload.file, aesKeyRef.current, (prog) => {
-            setProgress((p) => ({ ...p, [`send:${fileId}`]: prog }));
+          const sharedKey = await waitForSharedKey(sharedKeysRef, from);
+          await sendFile(channel, upload.file, sharedKey, (prog) => {
+            setProgress((p) => ({ ...p, [`send:${chanFileId}`]: prog }));
           });
-          setProgress((p) => { const n = { ...p }; delete n[`send:${fileId}`]; return n; });
+          setProgress((p) => { const n = { ...p }; delete n[`send:${chanFileId}`]; return n; });
         } catch (e) {
           toast(`Send failed: ${e.message}`, "error");
+        } finally {
+          removePeer(peerKey, [rk]);
         }
       });
     });
-    await peer.setRemoteDescription(new RTCSessionDescription(offer));
+
+    await setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await peer.createAnswer();
     await peer.setLocalDescription(answer);
-    socketRef_.current?.emit("signal:answer", { to: from, answer });
+    socketRef_.current?.emit("signal:answer", { to: from, answer, fileId });
   }, [toast]);
 
-  const socketRef = useSocket({
-    "vault:joined": ({ id, members, files }) => {
+  const rejoinVault = useCallback(() => {
+    const id = vaultIdRef.current;
+    if (!id || !myNameRef.current) return;
+    socketRef_.current?.emit("vault:join", { vaultId: id, name: myNameRef.current });
+  }, []);
+
+  const { socketRef, connected: socketConnected } = useSocket({
+    onConnect: () => {
+      if (vaultIdRef.current) {
+        rejoinVault();
+      }
+    },
+    onDisconnect: (reason) => {
+      for (const key of Object.keys(peersRef.current)) removePeer(key);
+      routesRef.current = {};
+      activeDownloadsRef.current.clear();
+      sharedKeysRef.current = {};
+      if (vaultIdRef.current && reason !== "io client disconnect") {
+        toast("Connection lost — reconnecting…", "info", 6000);
+      }
+    },
+    onConnectError: () => {
+      toast("Cannot reach server — retrying…", "error", 5000);
+    },
+    "vault:joined": async ({ id, members, files }) => {
+      const isReconnect = vaultIdRef.current === id;
       vaultIdRef.current = id;
-      st({ screen: "vault", vaultId: id, members, files, homeError: "", showInviteModal: true });
+      if (!ecdhRef.current) {
+        ecdhRef.current = await generateECDHKeypair();
+      }
+      socketRef_.current?.emit("vault:pubkey", { pubkey: ecdhRef.current.exported });
+      st({
+        screen: "vault", vaultId: id, members, files,
+        homeError: "", showInviteModal: !isReconnect,
+      });
+      if (isReconnect) toast("Reconnected to vault.", "success", 3000);
     },
     "vault:updated": ({ members, files }) => {
       setState((s) => {
@@ -240,43 +328,53 @@ export default function App() {
     "vault:error":    ({ message }) => st({ homeError: message }),
     "vault:dissolved": () => {
       toast("Vault dissolved — all members left.", "info", 8000);
-      st({ dissolved: true, screen: "home", showInviteModal: false });
+      for (const key of Object.keys(peersRef.current)) removePeer(key);
+      routesRef.current = {};
+      pendingUploadsRef.current.clear();
+      sharedKeysRef.current = {};
+      ecdhRef.current = null;
+      vaultIdRef.current = null;
+      activeDownloadsRef.current.clear();
+      st({ dissolved: true, screen: "home", showInviteModal: false, vaultId: null, inviteUrl: null, members: [], files: [] });
     },
-    "signal:offer":  ({ from, offer     }) => handleIncomingOffer({ from, offer }),
-    "signal:answer": async ({ from, answer }) => {
-      const peerKeys = peersRef.current[`byUploader:${from}`] || [];
-      for (const key of peerKeys) {
-        const peer = peersRef.current[key];
-        if (peer && peer.signalingState === "have-local-offer") {
-          await peer.setRemoteDescription(new RTCSessionDescription(answer));
-          break;
+    // ── ECDH key exchange ──────────────────────────────────────────────────
+    // Server broadcasts the full { socketId: base64url_pubkey } map whenever
+    // any member publishes their key. We derive a shared AES key with each
+    // peer we don't already have one for.
+    "vault:pubkeys": async (pubkeyMap) => {
+      const ecdh = ecdhRef.current;
+      if (!ecdh) return;
+      const myId = socketRef_.current?.id;
+      for (const [peerId, pubkeyB64] of Object.entries(pubkeyMap)) {
+        if (peerId === myId) continue;                          // skip ourselves
+        if (sharedKeysRef.current[peerId]) continue;           // already derived
+        try {
+          const theirPubKey = await importECDHPublicKey(pubkeyB64);
+          const sharedKey   = await deriveSharedKey(ecdh.privateKey, theirPubKey);
+          sharedKeysRef.current[peerId] = sharedKey;
+        } catch (e) {
+          console.warn("[ecdh] key derivation failed for", peerId, e);
         }
       }
     },
-    "signal:ice": async ({ from, candidate }) => {
+    "signal:offer":  ({ from, offer, fileId }) => handleIncomingOffer({ from, offer, fileId }),
+    "signal:answer": async ({ from, answer, fileId }) => {
+      const managed = resolvePeer(fileId, from);
+      if (!managed) return;
+      await managed.setRemoteDescription(new RTCSessionDescription(answer));
+    },
+    "signal:ice": async ({ from, candidate, fileId }) => {
       if (!candidate) return;
-      // Route to all active download peers from this uploader
-      const peerKeys = peersRef.current[`byUploader:${from}`] || [];
-      for (const key of peerKeys) {
-        const peer = peersRef.current[key];
-        if (peer) {
-          try { await peer.addIceCandidate(new RTCIceCandidate(candidate)); } catch (_) {}
-        }
-      }
-      // Also handle uploader-side peer (stored directly by downloader's socket id)
-      const uploaderPeer = peersRef.current[from];
-      if (uploaderPeer && !Array.isArray(uploaderPeer)) {
-        try { await uploaderPeer.addIceCandidate(new RTCIceCandidate(candidate)); } catch (_) {}
-      }
+      const managed = resolvePeer(fileId, from);
+      if (!managed) return;
+      await managed.addIceCandidate(candidate);
     },
   });
   socketRef_.current = socketRef.current;
 
   const createVault = useCallback(async () => {
     st({ homeError: "" });
-    const { key, exported } = await generateAESKey();
-    aesKeyRef.current = key;
-    sessionStorage.setItem("qs_key", exported);
+    ecdhRef.current = await generateECDHKeypair();
     socketRef_.current?.emit("vault:create", { name: myName });
   }, [myName, st]);
 
@@ -292,21 +390,37 @@ export default function App() {
     if (vaultId) setTimeout(() => joinVault(vaultId), 400);
   }, [joinVault]);
 
+  // Invite URL now only carries the vault code — no key in the URL.
+  // ECDH handles key exchange in-band after joining.
   useEffect(() => {
     if (state.vaultId && !state.inviteUrl) {
-      const exported = sessionStorage.getItem("qs_key");
-      if (exported) {
-        const url = `${window.location.origin}${window.location.pathname}#key=${exported}&vault=${state.vaultId}`;
-        st({ inviteUrl: url });
-      }
+      const url = `${window.location.origin}${window.location.pathname}#vault=${state.vaultId}`;
+      st({ inviteUrl: url });
     }
   }, [state.vaultId, state.inviteUrl, st]);
 
   const downloadAll = useCallback(() => {
-    vaultFilesRef.current.forEach((file) => {
-      if (file.uploaderId === socketRef_.current?.id) return;
-      downloadFile(file).catch((e) => console.error("download all:", file.name, e));
-    });
+    const otherFiles = vaultFilesRef.current.filter(
+      (f) => f.uploaderId !== socketRef_.current?.id
+    );
+    // Group files by uploader to avoid signaling collision
+    const byUploader = new Map();
+    for (const file of otherFiles) {
+      if (!byUploader.has(file.uploaderId)) byUploader.set(file.uploaderId, []);
+      byUploader.get(file.uploaderId).push(file);
+    }
+    // For each uploader, download files sequentially; different uploaders run in parallel
+    for (const [, files] of byUploader) {
+      (async () => {
+        for (const file of files) {
+          try {
+            await downloadFile(file);
+          } catch (e) {
+            console.error("download all:", file.name, e);
+          }
+        }
+      })();
+    }
   }, [downloadFile]);
 
   const onDrop = useCallback((e) => {
@@ -336,14 +450,20 @@ export default function App() {
               vault={{ id: state.vaultId, members: state.members, files: state.files }}
               inviteUrl={state.inviteUrl}
               myId={socketRef_.current?.id}
+              socketConnected={socketConnected}
               progress={progress}
               peerStatus={state.peerStatus}
-              encrypted={!!aesKeyRef.current}
+              encrypted={!!ecdhRef.current}
               onDrop={onDrop}
               onFileInput={onFileInput}
               onDownload={downloadFile}
               onDownloadAll={downloadAll}
-              onRemove={(fileId) => socketRef_.current?.emit("vault:file:remove", { fileId })}
+              onRemove={(fileId) => {
+                // Clean up the local pending upload when a file is removed
+                const file = vaultFilesRef.current.find((f) => f.id === fileId);
+                if (file?.hash) pendingUploadsRef.current.delete(file.hash);
+                socketRef_.current?.emit("vault:file:remove", { fileId });
+              }}
               onOpenInvite={() => st({ showInviteModal: true })}
             />
             {state.showInviteModal && state.inviteUrl && (
@@ -525,11 +645,7 @@ function HomeScreen({ onCreateVault, onJoinVault, error, dissolved }) {
     }}>
       {/* Brand */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
-        <img
-          src="/logo.png"
-          alt="Peerfy"
-          style={{ width: 44, height: 44, objectFit: "contain", filter: LOGO_FILTER }}
-        />
+        <PeerfyLogo size={44} />
         <span style={{ fontSize: 36, fontWeight: 800, letterSpacing: "-1.5px", color: C.accent }}>
           Peerfy
         </span>
@@ -600,7 +716,7 @@ function HomeScreen({ onCreateVault, onJoinVault, error, dissolved }) {
 // Vault screen
 // ═══════════════════════════════════════════════════════════════════════════════
 function VaultScreen({
-  vault, inviteUrl, myId, progress, peerStatus, encrypted,
+  vault, inviteUrl, myId, socketConnected, progress, peerStatus, encrypted,
   onDrop, onFileInput, onDownload, onDownloadAll, onRemove, onOpenInvite,
 }) {
   const [dragging, setDragging] = useState(false);
@@ -628,11 +744,7 @@ function VaultScreen({
       }}>
         {/* Brand */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          <img
-            src="/logo.png"
-            alt="Peerfy"
-            style={{ width: 24, height: 24, objectFit: "contain", filter: LOGO_FILTER }}
-          />
+          <PeerfyLogo size={24} />
           <span style={{ fontSize: 15, fontWeight: 800, color: C.accent, letterSpacing: "-0.4px" }}>
             Peerfy
           </span>
@@ -677,6 +789,16 @@ function VaultScreen({
               {connLabel}
             </span>
           )}
+          <span style={{
+            display: "flex", alignItems: "center", gap: 5,
+            fontSize: 10, color: socketConnected ? C.accent : C.danger,
+          }}>
+            <span style={{
+              width: 5, height: 5, borderRadius: "50%",
+              background: socketConnected ? C.accent : C.danger,
+            }} />
+            {socketConnected ? "Online" : "Offline"}
+          </span>
         </div>
 
         <div style={{ flex: 1 }} />
@@ -689,14 +811,10 @@ function VaultScreen({
       </nav>
 
       {/* ── 3-column body ───────────────────────────────────────────────── */}
-      <div style={{
-        flex: 1, display: "grid",
-        gridTemplateColumns: "196px 1fr 172px",
-        overflow: "hidden", minHeight: 0,
-      }}>
+      <div className="vault-layout">
 
         {/* ── Left: Upload ────────────────────────────────────────────── */}
-        <aside style={{
+        <aside className="vault-sidebar-left" style={{
           borderRight: `1px solid ${C.border}`,
           display: "flex", flexDirection: "column", gap: 10,
           padding: 14, overflowY: "auto",
@@ -771,15 +889,18 @@ function VaultScreen({
         <main style={{ overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <SectionLabel>{vault.files.length} {vault.files.length === 1 ? "File" : "Files"}</SectionLabel>
-            {vault.files.length > 1 && (
-              <KiwiBtn
-                onClick={() => { onDownloadAll(); setDlAll(true); setTimeout(() => setDlAll(false), 1000); }}
-                size="sm"
-              >
-                <DownloadIcon size={12} />
-                {dlAll ? "Downloading…" : `Download All (${vault.files.length})`}
-              </KiwiBtn>
-            )}
+            {(() => {
+              const downloadableCount = vault.files.filter((f) => f.uploaderId !== myId).length;
+              return downloadableCount > 1 ? (
+                <KiwiBtn
+                  onClick={() => { onDownloadAll(); setDlAll(true); setTimeout(() => setDlAll(false), 1000); }}
+                  size="sm"
+                >
+                  <DownloadIcon size={12} />
+                  {dlAll ? "Downloading…" : `Download All (${downloadableCount})`}
+                </KiwiBtn>
+              ) : null;
+            })()}
           </div>
 
           {vault.files.length === 0 ? (
@@ -813,7 +934,7 @@ function VaultScreen({
         </main>
 
         {/* ── Right: Members ─────────────────────────────────────────── */}
-        <aside style={{
+        <aside className="vault-sidebar-right" style={{
           borderLeft: `1px solid ${C.border}`,
           display: "flex", flexDirection: "column", gap: 8,
           padding: 14, overflowY: "auto",
@@ -936,7 +1057,7 @@ function FileTile({ file, isOwn, dl, onDownload, onRemove }) {
       )}
 
       {/* Download button on hover */}
-      {hovered && !downloading && (
+      {hovered && !downloading && !isOwn && (
         <button
           onClick={() => onDownload(file)}
           style={{
@@ -1028,6 +1149,19 @@ function ProgressBar({ pct, color = C.accent }) {
         borderRadius: 2, transition: "width 0.15s",
       }} />
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Logo
+// ═══════════════════════════════════════════════════════════════════════════════
+function PeerfyLogo({ size = 32 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <rect width="32" height="32" rx="8" fill="#CCFF00" />
+      <path d="M8 22V10h4.2c2.8 0 4.6 1.5 4.6 3.9 0 1.5-.7 2.6-1.9 3.2L18 22h-3.2l-2.3-4.4H11.2V22H8zm3.2-7.2h1c1.1 0 1.7-.5 1.7-1.3 0-.8-.6-1.3-1.7-1.3h-1v2.6zM20 22l5-12h3.4l-5 12H20z"
+            fill="#000" />
+    </svg>
   );
 }
 

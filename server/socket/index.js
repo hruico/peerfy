@@ -12,9 +12,11 @@ const { registerSignalingHandlers } = require("./signalingHandlers");
  * @returns {import("socket.io").Server}
  */
 function createSocketServer(httpServer) {
+  const allowedOrigin = process.env.ALLOWED_ORIGIN;
   const io = new Server(httpServer, {
     cors: {
-      origin:  isProd ? false : "*",
+      // In production ALLOWED_ORIGIN must be set — never default to wildcard.
+      origin: allowedOrigin || (isProd ? false : "*"),
       methods: ["GET", "POST"],
     },
     maxHttpBufferSize: 64 * 1024,   // 64 KB — signaling only, never file data
@@ -29,7 +31,7 @@ function createSocketServer(httpServer) {
   io.on("connection", (socket) => {
     console.log(`[socket] connect    ${socket.id}`);
     registerVaultHandlers(socket, io);
-    registerSignalingHandlers(socket);
+    registerSignalingHandlers(socket, io);
   });
 
   return io;

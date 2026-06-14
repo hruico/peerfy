@@ -30,12 +30,15 @@ app.use(helmet({
 app.use(morgan(isProd ? "combined" : "dev"));
 
 // ── Rate limiting ──────────────────────────────────────────────────────────────
+// Only applies to HTTP requests (health, static assets, SPA fallback).
+// WebSocket traffic is handled by Socket.IO and is not subject to this limiter.
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,  // 15 min
-  max:      100,
+  max:      300,              // generous for static asset fetches + reconnects
   standardHeaders: true,
   legacyHeaders:   false,
   message: { error: "Too many requests — please slow down." },
+  skip: (req) => req.path === "/health", // don't penalise health-check probes
 }));
 
 // ── Health check ───────────────────────────────────────────────────────────────
