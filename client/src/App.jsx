@@ -389,17 +389,25 @@ export default function App() {
     socketRef_.current?.emit("vault:join", { vaultId: vaultId.trim().toUpperCase(), name: myName });
   }, [myName, st]);
 
-  // If the URL contains #vault=XXXXXX, store it and join once the socket connects.
+  // If the URL contains #vault=XXXXXX, join once the socket is ready.
   const pendingVaultRef = useRef(null);
   useEffect(() => {
     const params  = new URLSearchParams(window.location.hash.slice(1));
     const vaultId = params.get("vault");
-    if (vaultId) pendingVaultRef.current = vaultId.trim().toUpperCase();
-  }, []);
+    if (!vaultId) return;
+    const id = vaultId.trim().toUpperCase();
+    // If socket is already connected, join immediately.
+    // Otherwise store it — onConnect will pick it up.
+    if (socketRef_.current?.connected) {
+      socketRef_.current.emit("vault:join", { vaultId: id, name: myNameRef.current });
+    } else {
+      pendingVaultRef.current = id;
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (state.vaultId && !state.inviteUrl) {
-      const url = `${window.location.origin}${window.location.pathname}#vault=${state.vaultId}`;
+      const url = `${window.location.origin}/#vault=${state.vaultId}`;
       st({ inviteUrl: url });
     }
   }, [state.vaultId, state.inviteUrl, st]);
