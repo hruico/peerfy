@@ -20,10 +20,8 @@ app.use(helmet({
       scriptSrc:      ["'self'", "'unsafe-inline'"],
       styleSrc:       ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc:        ["'self'", "https://fonts.gstatic.com"],
-      // 'self' covers same-origin Socket.IO WS upgrade.
-      // wss:/ws: covers Socket.IO polling fallback and any cross-origin WS.
-      // TURN/STUN traffic is handled by the browser's WebRTC stack natively
-      // and is NOT subject to CSP connectSrc, so no TURN domain needed here.
+      // 'self' covers same-origin Socket.IO. wss:/ws: covers cross-origin WS.
+      // WebRTC TURN/STUN traffic bypasses CSP entirely (handled by the browser).
       connectSrc:     ["'self'", "wss:", "ws:", "https://fonts.googleapis.com"],
       mediaSrc:       ["'none'"],
       objectSrc:      ["'none'"],
@@ -36,9 +34,7 @@ app.use(helmet({
 // ── Logging ────────────────────────────────────────────────────────────────────
 app.use(morgan(isProd ? "combined" : "dev"));
 
-// ── Rate limiting ──────────────────────────────────────────────────────────────
-// Only applies to HTTP requests (health, static assets, SPA fallback).
-// WebSocket traffic is handled by Socket.IO and is not subject to this limiter.
+// Rate limiting applies to HTTP only — Socket.IO traffic is not affected.
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,  // 15 min
   max:      300,              // generous for static asset fetches + reconnects

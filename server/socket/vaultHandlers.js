@@ -9,13 +9,7 @@ const { makeId, makeVaultId } = require("../lib/utils");
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
-/**
- * Register all vault-related socket event handlers.
- * @param {import("socket.io").Socket} socket
- * @param {import("socket.io").Server} io
- */
 function registerVaultHandlers(socket, io) {
-  // ── vault:create ────────────────────────────────────────────────────────────
   socket.on("vault:create", ({ name = "Anonymous" } = {}) => {
     removeMemberFromVault(socket, io);
 
@@ -43,7 +37,6 @@ function registerVaultHandlers(socket, io) {
     console.log(`[vault] ${vaultId} created by ${socket.id} (${name})`);
   });
 
-  // ── vault:join ──────────────────────────────────────────────────────────────
   socket.on("vault:join", ({ vaultId, name = "Anonymous" } = {}) => {
     const id = String(vaultId || "").toUpperCase();
     if (!isValidVaultId(id)) {
@@ -76,10 +69,6 @@ function registerVaultHandlers(socket, io) {
     console.log(`[vault] ${vault.id} joined by ${socket.id} (${name}), members: ${vault.members.size}`);
   });
 
-  // ── vault:pubkey ─────────────────────────────────────────────────────────────
-  // Each peer broadcasts their ECDH public key after joining.
-  // The server stores it and sends the full pubkey map to everyone in the vault
-  // so each peer can derive a shared secret with every other peer.
   socket.on("vault:pubkey", ({ pubkey } = {}) => {
     const vault = vaults.get(socket.vaultId);
     if (!vault) return;
@@ -96,9 +85,6 @@ function registerVaultHandlers(socket, io) {
     io.to(vault.id).emit("vault:pubkeys", pubkeys);
   });
 
-  // ── vault:file:add ──────────────────────────────────────────────────────────
-  // Uploader registers a file in the vault manifest. File data travels P2P over
-  // WebRTC when a receiver clicks download — it never passes through this server.
   socket.on("vault:file:add", ({ name, size, type, hash } = {}) => {
     const vault = vaults.get(socket.vaultId);
     if (!vault) {
@@ -129,7 +115,6 @@ function registerVaultHandlers(socket, io) {
     console.log(`[vault] ${vault.id} file added: ${entry.name} (${entry.size}B) by ${socket.id}`);
   });
 
-  // ── vault:file:remove ───────────────────────────────────────────────────────
   socket.on("vault:file:remove", ({ fileId } = {}) => {
     const vault = vaults.get(socket.vaultId);
     if (!vault) return;
@@ -146,7 +131,6 @@ function registerVaultHandlers(socket, io) {
     io.to(vault.id).emit("vault:updated", vaultSummary(vault));
   });
 
-  // ── disconnect ──────────────────────────────────────────────────────────────
   socket.on("disconnect", (reason) => {
     console.log(`[socket] disconnect ${socket.id} (${reason})`);
     removeMemberFromVault(socket, io);

@@ -50,10 +50,7 @@ export async function createOPFSWriter(filename, resumeFromByte = 0) {
   }
 }
 
-function createMemWriter(resumeFromByte = 0) {
-  // For in-memory resume we can't recover already-received data (it's gone),
-  // so we track how many bytes we're *supposed* to skip but will just
-  // accumulate from where the sender resumes sending.
+function createMemWriter() {
   const chunks = [];
   return {
     write: async (chunk) => {

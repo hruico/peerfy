@@ -76,9 +76,6 @@ const INIT = {
 
 let toastSeq = 0;
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Root
-// ═══════════════════════════════════════════════════════════════════════════════
 export default function App() {
   const [state, setState]       = useState(INIT);
   const [progress, setProgress] = useState({});
@@ -345,17 +342,13 @@ export default function App() {
       activeDownloadsRef.current.clear();
       st({ dissolved: true, screen: "home", showInviteModal: false, vaultId: null, inviteUrl: null, members: [], files: [] });
     },
-    // ── ECDH key exchange ──────────────────────────────────────────────────
-    // Server broadcasts the full { socketId: base64url_pubkey } map whenever
-    // any member publishes their key. We derive a shared AES key with each
-    // peer we don't already have one for.
     "vault:pubkeys": async (pubkeyMap) => {
       const ecdh = ecdhRef.current;
       if (!ecdh) return;
       const myId = socketRef_.current?.id;
       for (const [peerId, pubkeyB64] of Object.entries(pubkeyMap)) {
-        if (peerId === myId) continue;                          // skip ourselves
-        if (sharedKeysRef.current[peerId]) continue;           // already derived
+        if (peerId === myId) continue;
+        if (sharedKeysRef.current[peerId]) continue;
         try {
           const theirPubKey = await importECDHPublicKey(pubkeyB64);
           const sharedKey   = await deriveSharedKey(ecdh.privateKey, theirPubKey);
@@ -398,8 +391,6 @@ export default function App() {
     if (vaultId) setTimeout(() => joinVault(vaultId), 400);
   }, [joinVault]);
 
-  // Invite URL now only carries the vault code — no key in the URL.
-  // ECDH handles key exchange in-band after joining.
   useEffect(() => {
     if (state.vaultId && !state.inviteUrl) {
       const url = `${window.location.origin}${window.location.pathname}#vault=${state.vaultId}`;
@@ -411,13 +402,11 @@ export default function App() {
     const otherFiles = vaultFilesRef.current.filter(
       (f) => f.uploaderId !== socketRef_.current?.id
     );
-    // Group files by uploader to avoid signaling collision
     const byUploader = new Map();
     for (const file of otherFiles) {
       if (!byUploader.has(file.uploaderId)) byUploader.set(file.uploaderId, []);
       byUploader.get(file.uploaderId).push(file);
     }
-    // For each uploader, download files sequentially; different uploaders run in parallel
     for (const [, files] of byUploader) {
       (async () => {
         for (const file of files) {
@@ -467,7 +456,6 @@ export default function App() {
               onDownload={downloadFile}
               onDownloadAll={downloadAll}
               onRemove={(fileId) => {
-                // Clean up the local pending upload when a file is removed
                 const file = vaultFilesRef.current.find((f) => f.id === fileId);
                 if (file?.hash) pendingUploadsRef.current.delete(file.hash);
                 socketRef_.current?.emit("vault:file:remove", { fileId });
@@ -487,9 +475,6 @@ export default function App() {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Invite modal
-// ═══════════════════════════════════════════════════════════════════════════════
 function InviteModal({ vaultId, inviteUrl, onClose }) {
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -529,7 +514,6 @@ function InviteModal({ vaultId, inviteUrl, onClose }) {
         borderRadius: 16, padding: 28, width: "100%", maxWidth: 460,
         animation: "fade-up 0.18s ease",
       }}>
-        {/* Header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
           <div>
             <div style={{ fontSize: 17, fontWeight: 700, color: C.textPri, letterSpacing: "-0.3px" }}>
@@ -555,7 +539,6 @@ function InviteModal({ vaultId, inviteUrl, onClose }) {
           </button>
         </div>
 
-        {/* Vault code */}
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: C.textDim, letterSpacing: "0.08em",
                         textTransform: "uppercase", marginBottom: 8 }}>
@@ -578,7 +561,6 @@ function InviteModal({ vaultId, inviteUrl, onClose }) {
           </div>
         </div>
 
-        {/* Invite link */}
         <div style={{ marginBottom: 24 }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: C.textDim, letterSpacing: "0.08em",
                         textTransform: "uppercase", marginBottom: 8 }}>
@@ -601,7 +583,6 @@ function InviteModal({ vaultId, inviteUrl, onClose }) {
           </div>
         </div>
 
-        {/* Close / Done */}
         <KiwiBtn onClick={onClose} fullWidth size="lg">
           Done
         </KiwiBtn>
@@ -610,9 +591,6 @@ function InviteModal({ vaultId, inviteUrl, onClose }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Toast stack
-// ═══════════════════════════════════════════════════════════════════════════════
 function ToastStack({ toasts }) {
   if (!toasts.length) return null;
   const style = {
@@ -639,9 +617,6 @@ function ToastStack({ toasts }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Home screen
-// ═══════════════════════════════════════════════════════════════════════════════
 function HomeScreen({ onCreateVault, onJoinVault, error, dissolved }) {
   const [roomInput, setRoomInput] = useState("");
 
@@ -651,7 +626,6 @@ function HomeScreen({ onCreateVault, onJoinVault, error, dissolved }) {
       display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
       padding: "0 20px",
     }}>
-      {/* Brand */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
         <PeerfyLogo size={44} />
         <span style={{ fontSize: 36, fontWeight: 800, letterSpacing: "-1.5px", color: C.accent }}>
@@ -662,7 +636,6 @@ function HomeScreen({ onCreateVault, onJoinVault, error, dissolved }) {
         Peer-to-peer file sharing. No accounts. End-to-end encrypted.
       </p>
 
-      {/* Card */}
       <div style={{
         width: "100%", maxWidth: 380,
         background: C.surface, border: `1px solid ${C.border}`,
@@ -720,9 +693,6 @@ function HomeScreen({ onCreateVault, onJoinVault, error, dissolved }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Vault screen
-// ═══════════════════════════════════════════════════════════════════════════════
 function VaultScreen({
   vault, inviteUrl, myId, socketConnected, progress, peerStatus, encrypted,
   onDrop, onFileInput, onDownload, onDownloadAll, onRemove, onOpenInvite,
@@ -743,14 +713,12 @@ function VaultScreen({
   return (
     <div style={{ height: "100vh", background: C.bg, display: "flex", flexDirection: "column", overflow: "hidden" }}>
 
-      {/* ── Nav ─────────────────────────────────────────────────────────── */}
       <nav style={{
         flexShrink: 0, height: 52,
         borderBottom: `1px solid ${C.border}`,
         display: "flex", alignItems: "center",
         padding: "0 20px", gap: 16,
       }}>
-        {/* Brand */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           <PeerfyLogo size={24} />
           <span style={{ fontSize: 15, fontWeight: 800, color: C.accent, letterSpacing: "-0.4px" }}>
@@ -760,7 +728,6 @@ function VaultScreen({
 
         <div style={{ width: 1, height: 20, background: C.border, flexShrink: 0 }} />
 
-        {/* Vault ID pill */}
         <div style={{
           flex: 1, maxWidth: 440,
           background: C.surface, border: `1px solid ${C.border}`,
@@ -1160,9 +1127,7 @@ function ProgressBar({ pct, color = C.accent }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Logo
-// ═══════════════════════════════════════════════════════════════════════════════
+
 function PeerfyLogo({ size = 32 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
@@ -1173,9 +1138,6 @@ function PeerfyLogo({ size = 32 }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// SVG icons (no emojis)
-// ═══════════════════════════════════════════════════════════════════════════════
 
 const iconProps = (size) => ({
   width: size, height: size, viewBox: "0 0 24 24",
@@ -1259,7 +1221,6 @@ function EmptyIcon() {
   );
 }
 
-// ── File type SVG icons ───────────────────────────────────────────────────────
 function FileTypeIcon({ type = "", size = 28 }) {
   const s = { width: size, height: size, viewBox: "0 0 24 24", fill: "none",
                stroke: C.textDim, strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" };

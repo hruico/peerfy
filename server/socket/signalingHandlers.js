@@ -2,16 +2,7 @@
 
 const { vaults } = require("../lib/vaults");
 
-/**
- * WebRTC signaling relay.
- * All messages are targeted at a specific peer socket ID — never broadcast.
- *
- * Security: we verify that both the sender and the target are members of the
- * same vault before relaying, preventing cross-vault signal injection.
- *
- * @param {import("socket.io").Socket} socket
- * @param {import("socket.io").Server} io
- */
+// Relay WebRTC signaling between peers. Only relays between members of the same vault.
 function registerSignalingHandlers(socket, io) {
   function sameVault(targetId) {
     const vaultId = socket.vaultId;

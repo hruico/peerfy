@@ -30,8 +30,8 @@ services:
       - key: ROOM_TTL_MS
         value: "14400000"   # 4 hours
 
-      # ── Client build-time vars (baked in at build time by Vite) ──────────────# TURN credentials — set these in the Render dashboard, not here,
-      # so they are not committed to source control.
+      # ── Client build-time vars ──────────────────────────────────────────────
+      # TURN credentials — set in the Render dashboard, not here.
       - key: VITE_TURN_URL
         sync: false
       - key: VITE_TURN_USER

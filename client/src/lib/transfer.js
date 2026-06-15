@@ -23,8 +23,8 @@ import { sha256hex, encryptChunk, decryptChunk } from "./crypto";
 import { CHUNK_SIZE, BUFFER_THRESHOLD }          from "./webrtc";
 import { createOPFSWriter, OPFS_AVAILABLE }                      from "./opfs";
 
-const CHECKPOINT_EVERY = 10; // save resume offset every N chunks
-const RESUME_KEY = (hash) => `qs_resume_${hash}`;
+const CHECKPOINT_EVERY = 10;
+const RESUME_KEY = (hash) => `peerfy_resume_${hash}`;
 
 // ── Send ──────────────────────────────────────────────────────────────────────
 export async function sendFile(channel, file, aesKey, onProgress) {
@@ -179,7 +179,7 @@ export function receiveFile(channel, aesKey, onProgress) {
                 sessionStorage.removeItem(RESUME_KEY(msg.hash));
                 savedChunk = 0;
               }
-              const opfsName   = `qs_${msg.hash.slice(0, 16)}_${msg.name}`;
+              const opfsName   = `peerfy_${msg.hash.slice(0, 16)}_${msg.name}`;
               const resumeByte = savedChunk * CHUNK_SIZE;
 
               resumedFrom = savedChunk;
