@@ -274,6 +274,10 @@ export default function App() {
     onConnect: () => {
       if (vaultIdRef.current) {
         rejoinVault();
+      } else if (pendingVaultRef.current) {
+        const id = pendingVaultRef.current;
+        pendingVaultRef.current = null;
+        socketRef_.current?.emit("vault:join", { vaultId: id, name: myNameRef.current });
       }
     },
     onDisconnect: (reason) => {
@@ -385,11 +389,13 @@ export default function App() {
     socketRef_.current?.emit("vault:join", { vaultId: vaultId.trim().toUpperCase(), name: myName });
   }, [myName, st]);
 
+  // If the URL contains #vault=XXXXXX, store it and join once the socket connects.
+  const pendingVaultRef = useRef(null);
   useEffect(() => {
     const params  = new URLSearchParams(window.location.hash.slice(1));
     const vaultId = params.get("vault");
-    if (vaultId) setTimeout(() => joinVault(vaultId), 400);
-  }, [joinVault]);
+    if (vaultId) pendingVaultRef.current = vaultId.trim().toUpperCase();
+  }, []);
 
   useEffect(() => {
     if (state.vaultId && !state.inviteUrl) {
