@@ -270,10 +270,10 @@ export default function App() {
     socketRef_.current?.emit("vault:join", { vaultId: id, name: myNameRef.current });
   }, []);
 
-  // Read vault ID from URL hash once on mount — consumed in onConnect
+  // Read vault ID from URL query param once on mount — consumed when socket connects
   const pendingVaultRef = useRef(null);
   useEffect(() => {
-    const params  = new URLSearchParams(window.location.hash.slice(1));
+    const params  = new URLSearchParams(window.location.search);
     const vaultId = params.get("vault");
     if (vaultId) pendingVaultRef.current = vaultId.trim().toUpperCase();
   }, []);
@@ -404,7 +404,7 @@ export default function App() {
 
   useEffect(() => {
     if (state.vaultId && !state.inviteUrl) {
-      const url = `${window.location.origin}/#vault=${state.vaultId}`;
+      const url = `${window.location.origin}/?vault=${state.vaultId}`;
       st({ inviteUrl: url });
     }
   }, [state.vaultId, state.inviteUrl, st]);
