@@ -452,6 +452,8 @@ export default function App() {
             onJoinVault={joinVault}
             error={state.homeError}
             dissolved={state.dissolved}
+            joiningVaultId={pendingVaultRef.current}
+            socketConnected={socketConnected}
           />
         : <>
             <VaultScreen
@@ -628,8 +630,12 @@ function ToastStack({ toasts }) {
   );
 }
 
-function HomeScreen({ onCreateVault, onJoinVault, error, dissolved }) {
+function HomeScreen({ onCreateVault, onJoinVault, error, dissolved, joiningVaultId, socketConnected }) {
   const [roomInput, setRoomInput] = useState("");
+
+  // If opened via invite link, pre-fill the code and show waiting state
+  const joining = joiningVaultId && !socketConnected;
+  const waitingToJoin = joiningVaultId && socketConnected;
 
   return (
     <div style={{
@@ -659,6 +665,30 @@ function HomeScreen({ onCreateVault, onJoinVault, error, dissolved }) {
             background: "#0e0d00", border: "1px solid #3a3000", color: "#aaaa00",
           }}>
             Vault dissolved — all members disconnected.
+          </div>
+        )}
+
+        {joining && (
+          <div style={{
+            fontSize: 13, padding: "10px 14px", borderRadius: 8,
+            background: C.surface, border: `1px solid ${C.border}`, color: C.textSec,
+            display: "flex", alignItems: "center", gap: 8,
+          }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ffcc00",
+                           animation: "kiwi-pulse 1s infinite", flexShrink: 0 }} />
+            Connecting to server — this may take up to 30 seconds…
+          </div>
+        )}
+
+        {waitingToJoin && (
+          <div style={{
+            fontSize: 13, padding: "10px 14px", borderRadius: 8,
+            background: "#0b1000", border: "1px solid rgba(204,255,0,0.35)", color: C.accent,
+            display: "flex", alignItems: "center", gap: 8,
+          }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.accent,
+                           animation: "kiwi-pulse 1s infinite", flexShrink: 0 }} />
+            Joining vault {joiningVaultId}…
           </div>
         )}
 
