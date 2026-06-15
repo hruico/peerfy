@@ -6,11 +6,10 @@
     "node": ">=18"
   },
   "scripts": {
-    "build":       "npm run build --prefix client",
-    "start":       "npm start --prefix server",
-    "dev:client":  "npm run dev --prefix client",
-    "dev:server":  "npm start --prefix server",
-    "install:all": "cd client && npm ci && cd ../server && npm ci",
-    "render:build": "cd client && npm ci && npm run build && cd ../server && npm ci"
+    "postinstall":  "npm install --prefix client && npm install --prefix server",
+    "build":        "npm run build --prefix client",
+    "start":        "npm start --prefix server",
+    "dev:client":   "npm run dev --prefix client",
+    "dev:server":   "npm start --prefix server"
   }
 }

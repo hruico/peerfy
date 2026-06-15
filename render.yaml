@@ -5,8 +5,9 @@ services:
     region: oregon  # change to your preferred region: oregon, frankfurt, singapore, ohio
     plan: free      # upgrade to starter ($7/mo) to avoid spin-down on inactivity
 
-    # Build: install deps for both client and server, then build the React app
-    buildCommand: "(cd client && npm ci && npm run build) && (cd server && npm ci)"
+    # Build: postinstall in root package.json handles client + server installs automatically.
+    # Then build the React app.
+    buildCommand: npm install && npm run build
 
     # Start: run the Express server (serves the built client from client/dist)
     startCommand: npm start
