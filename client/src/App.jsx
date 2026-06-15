@@ -325,7 +325,15 @@ export default function App() {
         return { ...s, members, files };
       });
     },
-    "vault:error":    ({ message }) => st({ homeError: message }),
+    "vault:error": ({ message }) => {
+      setState((s) => {
+        if (s.screen === "vault") {
+          toast(message, "error");
+          return s;
+        }
+        return { ...s, homeError: message };
+      });
+    },
     "vault:dissolved": () => {
       toast("Vault dissolved — all members left.", "info", 8000);
       for (const key of Object.keys(peersRef.current)) removePeer(key);

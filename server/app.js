@@ -9,6 +9,9 @@ const { isProd } = require("./config");
 
 const app = express();
 
+// Render, Railway, etc. sit behind a reverse proxy — needed for rate limiting and logs.
+app.set("trust proxy", 1);
+
 // ── Security headers ───────────────────────────────────────────────────────────
 app.use(helmet({
   contentSecurityPolicy: {
@@ -17,7 +20,11 @@ app.use(helmet({
       scriptSrc:      ["'self'", "'unsafe-inline'"],
       styleSrc:       ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc:        ["'self'", "https://fonts.gstatic.com"],
-      connectSrc:     ["'self'", "wss:", "ws:"],
+      // 'self' covers same-origin Socket.IO WS upgrade.
+      // wss:/ws: covers Socket.IO polling fallback and any cross-origin WS.
+      // TURN/STUN traffic is handled by the browser's WebRTC stack natively
+      // and is NOT subject to CSP connectSrc, so no TURN domain needed here.
+      connectSrc:     ["'self'", "wss:", "ws:", "https://fonts.googleapis.com"],
       mediaSrc:       ["'none'"],
       objectSrc:      ["'none'"],
       frameAncestors: ["'none'"],

@@ -22,16 +22,19 @@ function registerSignalingHandlers(socket, io) {
   }
 
   socket.on("signal:offer", ({ to, offer, fileId }) => {
-    if (!sameVault(to)) return; // silently drop — not in same vault
+    if (typeof to !== "string" || !to) return;
+    if (!sameVault(to)) return;
     socket.to(to).emit("signal:offer", { from: socket.id, offer, fileId });
   });
 
   socket.on("signal:answer", ({ to, answer, fileId }) => {
+    if (typeof to !== "string" || !to) return;
     if (!sameVault(to)) return;
     socket.to(to).emit("signal:answer", { from: socket.id, answer, fileId });
   });
 
   socket.on("signal:ice", ({ to, candidate, fileId }) => {
+    if (typeof to !== "string" || !to) return;
     if (!sameVault(to)) return;
     socket.to(to).emit("signal:ice", { from: socket.id, candidate, fileId });
   });

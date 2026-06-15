@@ -1,0 +1,44 @@
+services:
+  - type: web
+    name: peerfy
+    runtime: node
+    region: oregon  # change to your preferred region: oregon, frankfurt, singapore, ohio
+    plan: free      # upgrade to starter ($7/mo) to avoid spin-down on inactivity
+
+    # Build: install deps for both client and server, then build the React app
+    buildCommand: npm run render:build
+
+    # Start: run the Express server (serves the built client from client/dist)
+    startCommand: npm start
+
+    # Tell Render to use the Node version from package.json engines field
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # REQUIRED — must match your Render service URL (or custom domain)
+      # Example: https://peerfy.onrender.com
+      - key: ALLOWED_ORIGIN
+        sync: false   # set manually in Render dashboard — do not commit this value
+
+      # Optional vault limits (defaults shown)
+      - key: MAX_MEMBERS
+        value: "10"
+      - key: MAX_ROOMS
+        value: "500"
+      - key: ROOM_TTL_MS
+        value: "14400000"   # 4 hours
+
+      # ── Client build-time vars (baked in at build time by Vite) ──────────────
+      # Leave VITE_BACKEND_URL empty → client connects to same origin as the page.
+      - key: VITE_BACKEND_URL
+        value: ""
+
+      # TURN credentials — set these in the Render dashboard, not here,
+      # so they are not committed to source control.
+      - key: VITE_TURN_URL
+        sync: false
+      - key: VITE_TURN_USER
+        sync: false
+      - key: VITE_TURN_CREDENTIAL
+        sync: false

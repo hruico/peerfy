@@ -1,8 +1,13 @@
 "use strict";
 
 const { MAX_MEMBERS, MAX_ROOMS } = require("../config");
-const { vaults, vaultSummary, dissolveVault, armTTL } = require("../lib/vaults");
+const {
+  vaults, vaultSummary, dissolveVault, armTTL,
+  isValidVaultId, removeMemberFromVault,
+} = require("../lib/vaults");
 const { makeId, makeVaultId } = require("../lib/utils");
+
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
 /**
  * Register all vault-related socket event handlers.
@@ -12,6 +17,8 @@ const { makeId, makeVaultId } = require("../lib/utils");
 function registerVaultHandlers(socket, io) {
   // ── vault:create ────────────────────────────────────────────────────────────
   socket.on("vault:create", ({ name = "Anonymous" } = {}) => {
+    removeMemberFromVault(socket, io);
+
     if (vaults.size >= MAX_ROOMS) {
       socket.emit("vault:error", { code: "SERVER_FULL", message: "Server is at capacity. Try again later." });
       return;
@@ -38,15 +45,24 @@ function registerVaultHandlers(socket, io) {
 
   // ── vault:join ──────────────────────────────────────────────────────────────
   socket.on("vault:join", ({ vaultId, name = "Anonymous" } = {}) => {
-    const vault = vaults.get(String(vaultId).toUpperCase());
+    const id = String(vaultId || "").toUpperCase();
+    if (!isValidVaultId(id)) {
+      socket.emit("vault:error", { code: "INVALID", message: "Invalid vault code." });
+      return;
+    }
 
+    const vault = vaults.get(id);
     if (!vault) {
       socket.emit("vault:error", { code: "NOT_FOUND", message: "Vault not found." });
       return;
     }
-    if (vault.members.size >= MAX_MEMBERS) {
+    if (vault.members.size >= MAX_MEMBERS && !vault.members.has(socket.id)) {
       socket.emit("vault:error", { code: "FULL", message: "Vault is full." });
       return;
+    }
+
+    if (socket.vaultId && socket.vaultId !== vault.id) {
+      removeMemberFromVault(socket, io);
     }
 
     vault.members.set(socket.id, { name: String(name).slice(0, 32), joinedAt: Date.now(), pubkey: null });
@@ -90,11 +106,17 @@ function registerVaultHandlers(socket, io) {
       return;
     }
 
+    const fileSize = Number(size);
+    if (!Number.isFinite(fileSize) || fileSize < 0 || fileSize > MAX_FILE_BYTES) {
+      socket.emit("vault:error", { code: "FILE_TOO_LARGE", message: "File exceeds the 50 MB limit." });
+      return;
+    }
+
     const fileId = makeId(10);
     const entry = {
       id:         fileId,
       name:       String(name || "unnamed").slice(0, 255),
-      size:       Number(size || 0),
+      size:       fileSize,
       type:       String(type || "application/octet-stream").slice(0, 128),
       hash:       String(hash || "").slice(0, 64),
       uploaderId: socket.id,
@@ -127,24 +149,7 @@ function registerVaultHandlers(socket, io) {
   // ── disconnect ──────────────────────────────────────────────────────────────
   socket.on("disconnect", (reason) => {
     console.log(`[socket] disconnect ${socket.id} (${reason})`);
-    const vaultId = socket.vaultId;
-    if (!vaultId) return;
-
-    const vault = vaults.get(vaultId);
-    if (!vault) return;
-
-    vault.members.delete(socket.id);
-
-    // Files only exist while the uploader is online with the File in memory.
-    for (const [fileId, file] of vault.files) {
-      if (file.uploaderId === socket.id) vault.files.delete(fileId);
-    }
-
-    if (vault.members.size === 0) {
-      dissolveVault(vaultId, io, "empty");
-    } else {
-      io.to(vaultId).emit("vault:updated", vaultSummary(vault));
-    }
+    removeMemberFromVault(socket, io);
   });
 }
 

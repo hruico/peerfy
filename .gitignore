@@ -1,5 +1,6 @@
 # ── Dependencies ──────────────────────────────────────────────────────────────
 node_modules/
+**/node_modules/
 .pnp
 .pnp.js
 .yarn/install-state.gz
@@ -7,11 +8,16 @@ node_modules/
 # ── Build output ───────────────────────────────────────────────────────────────
 client/dist/
 client/.vite/
+dist/
+dist-ssr/
 
 # ── Environment & secrets ──────────────────────────────────────────────────────
+# .env.example is intentionally committed — it documents required vars.
+# All other .env files are local and must never be committed.
 .env
 .env.local
 .env.*.local
+client/.env
 *.pem
 *.key
 *.cert
@@ -27,7 +33,7 @@ pnpm-debug.log*
 # ── OS & editor ───────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
-.vscode/settings.json
+.vscode/
 .idea/
 *.swp
 *.swo
@@ -39,9 +45,5 @@ coverage/
 # ── Misc ──────────────────────────────────────────────────────────────────────
 *.local
 .cache/
-
-client-react
 notes
-
-.vscode
-Dockerfile
+.dockerignore

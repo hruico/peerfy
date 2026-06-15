@@ -37,6 +37,42 @@ function vaultSummary(vault) {
   };
 }
 
+const VAULT_ID_RE = /^[A-Z2-9]{6}$/;
+
+function isValidVaultId(id) {
+  return typeof id === "string" && VAULT_ID_RE.test(id.toUpperCase());
+}
+
+/**
+ * Remove a socket from its current vault (if any) without closing the connection.
+ * @param {import("socket.io").Socket} socket
+ * @param {import("socket.io").Server} io
+ */
+function removeMemberFromVault(socket, io) {
+  const vaultId = socket.vaultId;
+  if (!vaultId) return;
+
+  const vault = vaults.get(vaultId);
+  if (!vault) {
+    socket.vaultId = null;
+    return;
+  }
+
+  vault.members.delete(socket.id);
+  for (const [fileId, file] of vault.files) {
+    if (file.uploaderId === socket.id) vault.files.delete(fileId);
+  }
+
+  socket.leave(vaultId);
+  socket.vaultId = null;
+
+  if (vault.members.size === 0) {
+    dissolveVault(vaultId, io, "empty");
+  } else {
+    io.to(vaultId).emit("vault:updated", vaultSummary(vault));
+  }
+}
+
 /**
  * Dissolve a vault: notify all members, remove from store.
  * `io` is passed in so this module stays free of Socket.IO imports at the top level.
@@ -79,4 +115,12 @@ function startSweep(io) {
   }, 5 * 60 * 1000);
 }
 
-module.exports = { vaults, vaultSummary, dissolveVault, armTTL, startSweep };
+module.exports = {
+  vaults,
+  vaultSummary,
+  dissolveVault,
+  armTTL,
+  startSweep,
+  isValidVaultId,
+  removeMemberFromVault,
+};
