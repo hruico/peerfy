@@ -270,15 +270,17 @@ export default function App() {
     socketRef_.current?.emit("vault:join", { vaultId: id, name: myNameRef.current });
   }, []);
 
+  // Read vault ID from URL hash once on mount — consumed in onConnect
+  const pendingVaultRef = useRef(null);
+  useEffect(() => {
+    const params  = new URLSearchParams(window.location.hash.slice(1));
+    const vaultId = params.get("vault");
+    if (vaultId) pendingVaultRef.current = vaultId.trim().toUpperCase();
+  }, []);
+
   const { socketRef, connected: socketConnected } = useSocket({
     onConnect: () => {
-      if (vaultIdRef.current) {
-        rejoinVault();
-      } else if (pendingVaultRef.current) {
-        const id = pendingVaultRef.current;
-        pendingVaultRef.current = null;
-        socketRef_.current?.emit("vault:join", { vaultId: id, name: myNameRef.current });
-      }
+      if (vaultIdRef.current) rejoinVault();
     },
     onDisconnect: (reason) => {
       for (const key of Object.keys(peersRef.current)) removePeer(key);
@@ -389,21 +391,16 @@ export default function App() {
     socketRef_.current?.emit("vault:join", { vaultId: vaultId.trim().toUpperCase(), name: myName });
   }, [myName, st]);
 
-  // If the URL contains #vault=XXXXXX, join once the socket is ready.
-  const pendingVaultRef = useRef(null);
+  // Join vault from URL hash once connected. Handles both fast connections
+  // (socket already connected when effect runs) and slow ones (waits for onConnect).
   useEffect(() => {
-    const params  = new URLSearchParams(window.location.hash.slice(1));
-    const vaultId = params.get("vault");
-    if (!vaultId) return;
-    const id = vaultId.trim().toUpperCase();
-    // If socket is already connected, join immediately.
-    // Otherwise store it — onConnect will pick it up.
-    if (socketRef_.current?.connected) {
-      socketRef_.current.emit("vault:join", { vaultId: id, name: myNameRef.current });
-    } else {
-      pendingVaultRef.current = id;
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!socketConnected) return;
+    if (vaultIdRef.current) return; // already in a vault
+    const id = pendingVaultRef.current;
+    if (!id) return;
+    pendingVaultRef.current = null;
+    socketRef_.current?.emit("vault:join", { vaultId: id, name: myNameRef.current });
+  }, [socketConnected]);
 
   useEffect(() => {
     if (state.vaultId && !state.inviteUrl) {
