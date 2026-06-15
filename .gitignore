@@ -12,7 +12,7 @@ dist/
 dist-ssr/
 
 # ── Environment & secrets ──────────────────────────────────────────────────────
-# .env.example is intentionally committed — it documents required vars.
+# .env.example is intentionally committed - it documents required vars.
 # All other .env files are local and must never be committed.
 .env
 .env.local

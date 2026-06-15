@@ -5,7 +5,7 @@ export async function sha256hex(buffer) {
     .join("");
 }
 
-// ECDH key exchange — P-256, non-extractable private key
+// ECDH key exchange - P-256, non-extractable private key
 
 export async function generateECDHKeypair() {
   const { privateKey, publicKey } = await crypto.subtle.generateKey(
@@ -27,7 +27,7 @@ export async function importECDHPublicKey(base64url) {
   );
 }
 
-// Both sides derive the same AES-GCM-256 key — no key material is ever transmitted.
+// Both sides derive the same AES-GCM-256 key - no key material is ever transmitted.
 export async function deriveSharedKey(myPrivateKey, theirPublicKey) {
   return crypto.subtle.deriveKey(
     { name: "ECDH", public: theirPublicKey },

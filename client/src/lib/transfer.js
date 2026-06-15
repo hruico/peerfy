@@ -1,5 +1,5 @@
 /**
- * P2P file transfer over a single RTCDataChannel — with auto-resume.
+ * P2P file transfer over a single RTCDataChannel - with auto-resume.
  *
  * sendFile(channel, file, aesKey, onProgress)   → Promise<void>
  * receiveFile(channel, aesKey, onProgress)       → Promise<Result>
@@ -15,8 +15,8 @@
  *   5. On success, sessionStorage checkpoint is cleared.
  *
  * Wire format per binary frame:
- *   [12 bytes IV][ciphertext]   — when aesKey provided
- *   [raw bytes]                 — otherwise
+ *   [12 bytes IV][ciphertext]   - when aesKey provided
+ *   [raw bytes]                 - otherwise
  */
 
 import { sha256hex, encryptChunk, decryptChunk } from "./crypto";
@@ -33,7 +33,7 @@ export async function sendFile(channel, file, aesKey, onProgress) {
   const total       = buffer.byteLength;
   const totalChunks = Math.ceil(total / CHUNK_SIZE);
 
-  // Send meta — include whether this transfer is encrypted so the receiver
+  // Send meta - include whether this transfer is encrypted so the receiver
   // knows whether to decrypt regardless of its own key state.
   const encrypted = !!aesKey;
   channel.send(JSON.stringify({
@@ -53,10 +53,10 @@ export async function sendFile(channel, file, aesKey, onProgress) {
     let startChunk = 0;
     let started    = false;
 
-    // Wait for receiver to reply with resume/ready — never auto-start from 0,
+    // Wait for receiver to reply with resume/ready - never auto-start from 0,
     // which races with resume negotiation and corrupts partial transfers.
     const resumeTimer = setTimeout(() => {
-      if (!started) reject(new Error("Receiver did not respond — transfer timed out."));
+      if (!started) reject(new Error("Receiver did not respond - transfer timed out."));
     }, 30_000);
 
     let sendDone = false;
@@ -89,7 +89,7 @@ export async function sendFile(channel, file, aesKey, onProgress) {
       function sendNext() {
         try {
           if (aesKey) {
-            // Encrypted — one chunk per microtask to preserve order
+            // Encrypted - one chunk per microtask to preserve order
             if (offset >= total) { done(); return; }
             if (channel.readyState !== "open") { reject(new Error("Channel closed")); return; }
             if (channel.bufferedAmount > BUFFER_THRESHOLD) {
@@ -110,7 +110,7 @@ export async function sendFile(channel, file, aesKey, onProgress) {
             return;
           }
 
-          // Plaintext — tight loop with back-pressure
+          // Plaintext - tight loop with back-pressure
           while (offset < total) {
             if (channel.readyState !== "open") { reject(new Error("Channel closed")); return; }
             if (channel.bufferedAmount > BUFFER_THRESHOLD) {
@@ -174,7 +174,7 @@ export function receiveFile(channel, aesKey, onProgress) {
             if (msg.type === "meta") {
               meta = msg;
               let savedChunk = Number(sessionStorage.getItem(RESUME_KEY(msg.hash)) || 0);
-              // Resume only works with OPFS — otherwise start fresh to avoid corruption
+              // Resume only works with OPFS - otherwise start fresh to avoid corruption
               if (savedChunk > 0 && !OPFS_AVAILABLE) {
                 sessionStorage.removeItem(RESUME_KEY(msg.hash));
                 savedChunk = 0;
@@ -243,7 +243,7 @@ export function receiveFile(channel, aesKey, onProgress) {
               raw.slice(12)
             );
           } else if (meta?.encrypted && !aesKey) {
-            // Sender encrypted but we have no key — can't decrypt
+            // Sender encrypted but we have no key - can't decrypt
             if (!settled) {
               settled = true;
               writer?.cleanup?.();

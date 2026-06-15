@@ -18,7 +18,7 @@
  *   name:       string,
  *   size:       number,
  *   type:       string,
- *   hash:       string,   // SHA-256 hex — computed by uploader
+ *   hash:       string,   // SHA-256 hex - computed by uploader
  *   uploaderId: socketId,
  *   addedAt:    number,
  * }

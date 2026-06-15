@@ -26,7 +26,7 @@ if (turnUrl) {
 
 export const ICE_CONFIG = { iceServers };
 
-// 64 KB chunks — well within the 256 KB SCTP message limit and works across browsers
+// 64 KB chunks - well within the 256 KB SCTP message limit and works across browsers
 export const CHUNK_SIZE = 64 * 1024;
 
 // Pause sending when the DataChannel send buffer exceeds this. Keeping it at

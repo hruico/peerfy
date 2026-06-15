@@ -11,7 +11,7 @@ const io         = createSocketServer(httpServer);
 
 // ── Graceful shutdown ──────────────────────────────────────────────────────────
 function shutdown(signal) {
-  console.log(`\n[server] ${signal} received — shutting down gracefully`);
+  console.log(`\n[server] ${signal} received - shutting down gracefully`);
   for (const vaultId of [...vaults.keys()]) {
     dissolveVault(vaultId, io, "server_shutdown");
   }

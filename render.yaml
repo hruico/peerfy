@@ -17,10 +17,10 @@ services:
       - key: NODE_ENV
         value: production
 
-      # REQUIRED — must match your Render service URL (or custom domain)
+      # REQUIRED - must match your Render service URL (or custom domain)
       # Example: https://peerfy.onrender.com
       - key: ALLOWED_ORIGIN
-        sync: false   # set manually in Render dashboard — do not commit this value
+        sync: false   # set manually in Render dashboard - do not commit this value
 
       # Optional vault limits (defaults shown)
       - key: MAX_MEMBERS
@@ -31,7 +31,7 @@ services:
         value: "14400000"   # 4 hours
 
       # ── Client build-time vars ──────────────────────────────────────────────
-      # TURN credentials — set in the Render dashboard, not here.
+      # TURN credentials - set in the Render dashboard, not here.
       - key: VITE_TURN_URL
         sync: false
       - key: VITE_TURN_USER

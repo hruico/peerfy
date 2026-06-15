@@ -1,5 +1,5 @@
 /**
- * OPFS writer — streams chunks directly to disk (Origin Private File System).
+ * OPFS writer - streams chunks directly to disk (Origin Private File System).
  * Falls back to in-memory accumulation if OPFS is unavailable.
  *
  * Supports resume: pass resumeFromByte > 0 to seek the write cursor forward,
@@ -18,7 +18,7 @@ export async function createOPFSWriter(filename, resumeFromByte = 0) {
     const root = await navigator.storage.getDirectory();
 
     if (resumeFromByte === 0) {
-      // Fresh start — delete any stale file with this name
+      // Fresh start - delete any stale file with this name
       try { await root.removeEntry(filename); } catch (_) {}
     }
 

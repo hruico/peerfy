@@ -9,7 +9,7 @@ const { isProd } = require("./config");
 
 const app = express();
 
-// Render, Railway, etc. sit behind a reverse proxy — needed for rate limiting and logs.
+// Render, Railway, etc. sit behind a reverse proxy - needed for rate limiting and logs.
 app.set("trust proxy", 1);
 
 // ── Security headers ───────────────────────────────────────────────────────────
@@ -34,13 +34,13 @@ app.use(helmet({
 // ── Logging ────────────────────────────────────────────────────────────────────
 app.use(morgan(isProd ? "combined" : "dev"));
 
-// Rate limiting applies to HTTP only — Socket.IO traffic is not affected.
+// Rate limiting applies to HTTP only - Socket.IO traffic is not affected.
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,  // 15 min
   max:      300,              // generous for static asset fetches + reconnects
   standardHeaders: true,
   legacyHeaders:   false,
-  message: { error: "Too many requests — please slow down." },
+  message: { error: "Too many requests - please slow down." },
   skip: (req) => req.path === "/health", // don't penalise health-check probes
 }));
 

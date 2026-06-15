@@ -150,7 +150,7 @@ export default function App() {
         cleanup();
 
         if (!ok) {
-          toast(`Hash mismatch — "${name}" may be corrupted.`, "error");
+          toast(`Hash mismatch - "${name}" may be corrupted.`, "error");
           return;
         }
         toast(`"${name}" downloaded.`, "success");
@@ -200,7 +200,7 @@ export default function App() {
       }
       const upload = pendingUploadsRef.current.get(vFile.hash);
       if (!upload) {
-        toast(`File "${vFile.name}" is no longer available — uploader may have refreshed.`, "error");
+        toast(`File "${vFile.name}" is no longer available - uploader may have refreshed.`, "error");
         return;
       }
 
@@ -231,7 +231,7 @@ export default function App() {
     socketRef_.current?.emit("vault:join", { vaultId: id, name: myNameRef.current });
   }, []);
 
-  // Read vault ID from URL query param once on mount — consumed when socket connects
+  // Read vault ID from URL query param once on mount - consumed when socket connects
   const pendingVaultRef = useRef(null);
   useEffect(() => {
     const params  = new URLSearchParams(window.location.search);
@@ -249,11 +249,11 @@ export default function App() {
       activeDownloadsRef.current.clear();
       sharedKeysRef.current = {};
       if (vaultIdRef.current && reason !== "io client disconnect") {
-        toast("Connection lost — reconnecting…", "info", 6000);
+        toast("Connection lost - reconnecting…", "info", 6000);
       }
     },
     onConnectError: () => {
-      toast("Cannot reach server — retrying…", "error", 5000);
+      toast("Cannot reach server - retrying…", "error", 5000);
     },
     "vault:joined": async ({ id, members, files }) => {
       const isReconnect = vaultIdRef.current === id;
@@ -281,7 +281,7 @@ export default function App() {
           }
         });
         members.forEach((m) => {
-          // Only toast for genuinely new arrivals — not ourselves, not pre-existing members
+          // Only toast for genuinely new arrivals - not ourselves, not pre-existing members
           if (!prevIds.has(m.id) && m.id !== socketRef_.current?.id) {
             toast(`${m.name} joined.`, "info");
           }
@@ -299,7 +299,7 @@ export default function App() {
       });
     },
     "vault:dissolved": () => {
-      toast("Vault dissolved — all members left.", "info", 8000);
+      toast("Vault dissolved - all members left.", "info", 8000);
       for (const key of Object.keys(peersRef.current)) removePeer(key);
       routesRef.current = {};
       pendingUploadsRef.current.clear();
@@ -624,7 +624,7 @@ function HomeScreen({ onCreateVault, onJoinVault, error, dissolved, joiningVault
             fontSize: 13, padding: "10px 14px", borderRadius: 8,
             background: "#0e0d00", border: "1px solid #3a3000", color: "#aaaa00",
           }}>
-            Vault dissolved — all members disconnected.
+            Vault dissolved - all members disconnected.
           </div>
         )}
 
@@ -636,7 +636,7 @@ function HomeScreen({ onCreateVault, onJoinVault, error, dissolved, joiningVault
           }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ffcc00",
                            animation: "kiwi-pulse 1s infinite", flexShrink: 0 }} />
-            Connecting to server — this may take up to 30 seconds…
+            Connecting to server - this may take up to 30 seconds…
           </div>
         )}
 

@@ -1,7 +1,7 @@
 /**
- * WebRTC peer connection helpers — ICE queuing and signaling route keys.
+ * WebRTC peer connection helpers - ICE queuing and signaling route keys.
  *
- * Route key format: `${fileId}:${remoteSocketId}` — unique per file transfer
+ * Route key format: `${fileId}:${remoteSocketId}` - unique per file transfer
  * between two peers, so multiple downloaders of the same file don't collide.
  */
 
@@ -65,7 +65,7 @@ export async function waitForSharedKey(sharedKeysRef, peerId, timeoutMs = 10000)
 
   return new Promise((resolve, reject) => {
     const deadline = setTimeout(
-      () => reject(new Error("Key exchange timed out — peer may have disconnected.")),
+      () => reject(new Error("Key exchange timed out - peer may have disconnected.")),
       timeoutMs,
     );
     const interval = setInterval(() => {

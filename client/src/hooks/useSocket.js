@@ -7,7 +7,7 @@ const EVENTS = [
   "signal:offer", "signal:answer", "signal:ice",
 ];
 
-// Module-level singleton — survives React 18 Strict Mode double-mount.
+// Module-level singleton - survives React 18 Strict Mode double-mount.
 let _socket = null;
 
 function getSocket() {
