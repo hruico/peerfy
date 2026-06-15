@@ -3,7 +3,7 @@ import { useSocket }          from "./hooks/useSocket";
 import { sha256hex, generateECDHKeypair, importECDHPublicKey, deriveSharedKey } from "./lib/crypto";
 import { sendFile, receiveFile }                   from "./lib/transfer";
 import { ICE_CONFIG }                              from "./lib/webrtc";
-import { formatBytes }                             from "./lib/format";
+import { formatBytes, formatSpeed }                from "./lib/format";
 import { routeKey, createManagedPeer, waitForSharedKey } from "./lib/peers";
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
@@ -24,41 +24,6 @@ const C = {
   dangerBg:  "#1a0000",
   dangerBdr: "#4a0000",
 };
-
-const FONT = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-
-// ── Global styles injected once ───────────────────────────────────────────────
-const GLOBAL_CSS = `
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body, #root { height: 100%; }
-  body {
-    font-family: ${FONT};
-    background: ${C.bg};
-    color: ${C.textPri};
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
-  }
-  button { font-family: inherit; }
-  input  { font-family: inherit; }
-  ::-webkit-scrollbar { width: 4px; height: 4px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 4px; }
-  @keyframes kiwi-pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
-  @keyframes fade-up {
-    from { opacity: 0; transform: translateY(6px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-  .vault-layout {
-    flex: 1; display: grid;
-    grid-template-columns: 196px 1fr 172px;
-    overflow: hidden; min-height: 0;
-  }
-  @media (max-width: 900px) {
-    .vault-layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
-    .vault-sidebar-left { border-right: none !important; border-bottom: 1px solid ${C.border}; }
-    .vault-sidebar-right { border-left: none !important; border-top: 1px solid ${C.border}; max-height: 180px; }
-  }
-`;
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const INIT = {
@@ -207,16 +172,12 @@ export default function App() {
       toast(`"${file.name}" exceeds the ${formatBytes(MAX_UPLOAD_BYTES)} limit.`, "error", 6000);
       return;
     }
-    // Hash the file to register it in the vault manifest.
-    // We do NOT store the ArrayBuffer here — sendFile will re-read from the File
-    // object on demand, avoiding doubling memory usage for large files.
     const buffer = await file.arrayBuffer();
     const hash   = await sha256hex(buffer);
     socketRef_.current?.emit("vault:file:add", {
       name: file.name, size: file.size,
       type: file.type || "application/octet-stream", hash,
     });
-    // Store only the File reference (not the buffer) so the browser can GC it.
     pendingUploadsRef.current.set(hash, { file, hash });
     toast(`"${file.name}" added to vault.`, "success");
   }, [toast]);
@@ -391,7 +352,7 @@ export default function App() {
     socketRef_.current?.emit("vault:join", { vaultId: vaultId.trim().toUpperCase(), name: myName });
   }, [myName, st]);
 
-  // Join vault from URL hash once connected. Handles both fast connections
+  // Join vault from URL query param once connected. Handles both fast connections
   // (socket already connected when effect runs) and slow ones (waits for onConnect).
   useEffect(() => {
     if (!socketConnected) return;
@@ -443,7 +404,6 @@ export default function App() {
 
   return (
     <>
-      <style>{GLOBAL_CSS}</style>
       <ToastStack toasts={state.toasts} />
 
       {state.screen === "home"
@@ -826,10 +786,7 @@ function VaultScreen({
         </KiwiBtn>
       </nav>
 
-      {/* ── 3-column body ───────────────────────────────────────────────── */}
       <div className="vault-layout">
-
-        {/* ── Left: Upload ────────────────────────────────────────────── */}
         <aside className="vault-sidebar-left" style={{
           borderRight: `1px solid ${C.border}`,
           display: "flex", flexDirection: "column", gap: 10,
@@ -870,7 +827,6 @@ function VaultScreen({
             Max {formatBytes(MAX_UPLOAD_BYTES)} per file
           </span>
 
-          {/* Active outbound transfers */}
           {vault.files.some((f) => progress[`send:${f.id}`]) && (
             <>
               <div style={{ height: 1, background: C.border, margin: "4px 0" }} />
@@ -901,7 +857,6 @@ function VaultScreen({
           )}
         </aside>
 
-        {/* ── Center: File grid ──────────────────────────────────────── */}
         <main style={{ overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <SectionLabel>{vault.files.length} {vault.files.length === 1 ? "File" : "Files"}</SectionLabel>
@@ -949,7 +904,6 @@ function VaultScreen({
           )}
         </main>
 
-        {/* ── Right: Members ─────────────────────────────────────────── */}
         <aside className="vault-sidebar-right" style={{
           borderLeft: `1px solid ${C.border}`,
           display: "flex", flexDirection: "column", gap: 8,
@@ -1001,9 +955,6 @@ function VaultScreen({
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// File tile
-// ═══════════════════════════════════════════════════════════════════════════════
 function FileTile({ file, isOwn, dl, onDownload, onRemove }) {
   const [hovered, setHovered] = useState(false);
   const pct = dl?.total ? Math.round((dl.transferred / dl.total) * 100) : 0;
@@ -1065,9 +1016,15 @@ function FileTile({ file, isOwn, dl, onDownload, onRemove }) {
       {downloading && dl.total > 0 && (
         <div style={{ width: "100%", marginTop: 2 }}>
           <ProgressBar pct={pct} />
-          <div style={{ fontSize: 10, color: C.accent, textAlign: "center", marginTop: 4,
-                        fontVariantNumeric: "tabular-nums" }}>
-            {pct}%
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+            <span style={{ fontSize: 10, color: C.accent, fontVariantNumeric: "tabular-nums" }}>
+              {pct}%
+            </span>
+            {dl.speed > 0 && (
+              <span style={{ fontSize: 10, color: C.textDim, fontVariantNumeric: "tabular-nums" }}>
+                {formatSpeed(dl.speed)}
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -1093,10 +1050,6 @@ function FileTile({ file, isOwn, dl, onDownload, onRemove }) {
     </div>
   );
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Shared UI primitives
-// ═══════════════════════════════════════════════════════════════════════════════
 
 function KiwiBtn({ onClick, children, disabled, fullWidth, size = "md" }) {
   const [hov, setHov] = useState(false);
@@ -1167,7 +1120,6 @@ function ProgressBar({ pct, color = C.accent }) {
     </div>
   );
 }
-
 
 function PeerfyLogo({ size = 32 }) {
   return (

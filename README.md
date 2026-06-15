@@ -31,7 +31,7 @@ The signaling server (Node.js + Socket.IO on Render) only relays WebRTC offers, 
 - SHA-256 hash verification — every file is re-hashed on arrival and compared to the sender's hash
 - Real-time progress bar, transfer speed (MB/s), and connection status per peer
 - Graceful disconnect — vault updates when someone leaves, no crashes
-- Auto-download when transfer completes
+- Download when transfer completes
 
 ### Advanced
 - **Multi-peer mesh** — up to 10 members per vault, each downloading directly from the uploader in parallel
